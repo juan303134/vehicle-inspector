@@ -60,7 +60,7 @@ final class InspectionStore: ObservableObject {
                     .max() ?? vehicle.lastInspectionDate
                 return updatedVehicle
             }
-            inspections = loadedInspections
+            mergeCloudInspections(loadedInspections)
             cloudMessage = "Cloud dashboard loaded."
         } catch {
             cloudMessage = "Could not load cloud dashboard."
@@ -75,10 +75,9 @@ final class InspectionStore: ObservableObject {
 
         do {
             let loadedInspections = try await VehicleDamageAnalysisService.shared.fetchInspections(vehicleID: vehicle.id)
-            inspections.removeAll { $0.vehicleID == vehicle.id }
-            inspections.append(contentsOf: loadedInspections)
+            mergeCloudInspections(loadedInspections, for: vehicle.id)
 
-            if let latestDate = loadedInspections.map(\.date).max(),
+            if let latestDate = inspections(for: vehicle).map(\.date).max(),
                let vehicleIndex = vehicles.firstIndex(where: { $0.id == vehicle.id }) {
                 vehicles[vehicleIndex].lastInspectionDate = latestDate
             }
@@ -95,6 +94,30 @@ final class InspectionStore: ObservableObject {
         inspections
             .filter { $0.vehicleID == vehicle.id }
             .sorted { $0.date > $1.date }
+    }
+
+    private func mergeCloudInspections(_ loadedInspections: [Inspection], for vehicleID: UUID? = nil) {
+        let loadedIDs = Set(loadedInspections.map(\.id))
+        let localInProgress = inspections.filter { inspection in
+            guard inspection.status == .analyzing || inspection.status == .failed else {
+                return false
+            }
+
+            if let vehicleID, inspection.vehicleID != vehicleID {
+                return false
+            }
+
+            return !loadedIDs.contains(inspection.id)
+        }
+
+        if let vehicleID {
+            inspections.removeAll { $0.vehicleID == vehicleID }
+        } else {
+            inspections.removeAll()
+        }
+
+        inspections.append(contentsOf: loadedInspections)
+        inspections.append(contentsOf: localInProgress)
     }
 
     func createInspection(
