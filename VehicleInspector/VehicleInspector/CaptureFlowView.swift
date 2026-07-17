@@ -698,55 +698,20 @@ struct CaptureFlowView: View {
             }
         }
 
-        isAnalyzing = true
-        analysisMessage = nil
-        cloudSaveMessage = nil
+        let inspection = store.startAnalysis(
+            for: vehicle,
+            photos: photos,
+            mode: selectedAnalysisMode,
+            checklist: checklistItems,
+            inspectorNotes: inspectorNotes,
+            odometerText: odometerText,
+            odometerImageData: odometerImageData
+        )
 
-        Task {
-            do {
-                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos, mode: selectedAnalysisMode)
-                let inspection = await MainActor.run {
-                    store.createInspection(
-                        for: vehicle,
-                        photos: photos,
-                        findings: findings,
-                        analysisSource: .ai,
-                        status: findings.isEmpty ? .completed : .needsReview,
-                        checklist: checklistItems,
-                        inspectorNotes: inspectorNotes,
-                        odometerText: odometerText,
-                        odometerImageData: odometerImageData
-                    )
-                }
-
-                await MainActor.run {
-                    createdInspection = inspection
-                    cloudSaveMessage = "Saving inspection to cloud..."
-                    isAnalyzing = false
-                    showingResults = true
-                }
-
-                do {
-                    let cloudInspection = try await VehicleDamageAnalysisService.shared.saveInspection(vehicle: vehicle, inspection: inspection)
-                    await MainActor.run {
-                        if let cloudInspection {
-                            store.upsertInspection(cloudInspection)
-                            createdInspection = cloudInspection
-                        }
-                        cloudSaveMessage = "Inspection saved to cloud."
-                    }
-                } catch {
-                    await MainActor.run {
-                        cloudSaveMessage = "Inspection is saved on this iPhone, but cloud sync failed."
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isAnalyzing = false
-                    analysisMessage = "AI analysis did not finish. Check the backend log and try again."
-                }
-            }
-        }
+        createdInspection = inspection
+        isAnalyzing = false
+        cloudSaveMessage = "Analysis is running in the background."
+        showingResults = true
     }
 
     private func hasPhotos(for angle: InspectionAngle) -> Bool {

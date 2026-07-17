@@ -131,6 +131,72 @@ final class InspectionStore: ObservableObject {
         return inspection
     }
 
+    func startAnalysis(
+        for vehicle: Vehicle,
+        photos: [InspectionPhoto],
+        mode: AnalysisMode,
+        checklist: [InspectionChecklistItem],
+        inspectorNotes: String,
+        odometerText: String,
+        odometerImageData: Data?
+    ) -> Inspection {
+        let inspection = createInspection(
+            for: vehicle,
+            photos: photos,
+            findings: [],
+            analysisSource: .ai,
+            status: .analyzing,
+            checklist: checklist,
+            inspectorNotes: inspectorNotes,
+            odometerText: odometerText,
+            odometerImageData: odometerImageData
+        )
+
+        cloudMessage = "Analysis is running in the background."
+
+        Task {
+            do {
+                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos, mode: mode)
+                await MainActor.run {
+                    self.replaceAnalysis(
+                        inspectionID: inspection.id,
+                        findings: findings,
+                        source: .ai
+                    )
+                    self.cloudMessage = "Analysis completed. Saving inspection to cloud..."
+                }
+
+                let completedInspection = await MainActor.run {
+                    self.inspections.first(where: { $0.id == inspection.id }) ?? inspection
+                }
+
+                do {
+                    let cloudInspection = try await VehicleDamageAnalysisService.shared.saveInspection(
+                        vehicle: vehicle,
+                        inspection: completedInspection
+                    )
+                    await MainActor.run {
+                        if let cloudInspection {
+                            self.upsertInspection(cloudInspection)
+                        }
+                        self.cloudMessage = "Inspection saved to cloud."
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.cloudMessage = "Inspection finished on this iPhone, but cloud sync failed."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.markInspectionFailed(inspectionID: inspection.id)
+                    self.cloudMessage = "AI analysis failed. Open the inspection and reanalyze."
+                }
+            }
+        }
+
+        return inspection
+    }
+
     func upsertInspection(_ inspection: Inspection) {
         inspections.removeAll { $0.id == inspection.id }
         inspections.insert(inspection, at: 0)
@@ -138,6 +204,14 @@ final class InspectionStore: ObservableObject {
         if let index = vehicles.firstIndex(where: { $0.id == inspection.vehicleID }) {
             vehicles[index].lastInspectionDate = inspection.date
         }
+    }
+
+    func markInspectionFailed(inspectionID: UUID) {
+        guard let inspectionIndex = inspections.firstIndex(where: { $0.id == inspectionID }) else {
+            return
+        }
+
+        inspections[inspectionIndex].status = .failed
     }
 
     func removeInspection(_ inspection: Inspection) {

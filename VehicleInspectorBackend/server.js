@@ -517,7 +517,7 @@ async function getVehicle(vehicleId) {
 
 async function createInspection(vehicleId, body) {
   const client = await db.connect();
-  const inspectionId = randomUUID();
+  const inspectionId = cleanOptionalString(body.summary?.inspectionID) || cleanOptionalString(body.summary?.inspection_id) || randomUUID();
   const photos = Array.isArray(body.photos) ? body.photos : [];
   const findings = Array.isArray(body.findings) ? body.findings : [];
   const checklist = Array.isArray(body.checklist) ? body.checklist : [];

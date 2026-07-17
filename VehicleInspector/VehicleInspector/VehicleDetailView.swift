@@ -235,8 +235,15 @@ struct InspectionHistoryRow: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 6) {
-                StatusPill(text: "\(newCount) new", systemImage: "sparkle.magnifyingglass", color: AppTheme.warning)
-                if changedCount > 0 {
+                StatusPill(text: inspection.status.rawValue, systemImage: inspection.status.icon, color: inspection.status.color)
+                if inspection.status == .analyzing {
+                    Text("You can keep using the app")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.muted)
+                } else {
+                    StatusPill(text: "\(newCount) new", systemImage: "sparkle.magnifyingglass", color: AppTheme.warning)
+                }
+                if inspection.status != .analyzing && changedCount > 0 {
                     StatusPill(text: "\(changedCount) changed", systemImage: "exclamationmark.arrow.triangle.2.circlepath", color: .orange)
                 }
             }
