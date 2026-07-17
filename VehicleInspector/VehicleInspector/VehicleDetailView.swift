@@ -155,14 +155,31 @@ struct InspectionHistoryRow: View {
                     Text(inspection.date.shortInspectionDate)
                         .font(.headline)
                         .foregroundStyle(AppTheme.ink)
-                    Text("\(inspection.photos.count) photos · \(inspection.findings.count) findings")
+                    Text("\(inspection.photos.count) photos · \(inspection.findings.count) findings · \(highSeverityCount) high")
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.muted)
                 }
                 Spacer()
-                StatusPill(text: "\(inspection.findings.filter(\.isNew).count) new", systemImage: "sparkle.magnifyingglass", color: AppTheme.warning)
+                VStack(alignment: .trailing, spacing: 6) {
+                    StatusPill(text: "\(newCount) new", systemImage: "sparkle.magnifyingglass", color: AppTheme.warning)
+                    if changedCount > 0 {
+                        StatusPill(text: "\(changedCount) changed", systemImage: "exclamationmark.arrow.triangle.2.circlepath", color: .orange)
+                    }
+                }
             }
         }
+    }
+
+    private var newCount: Int {
+        inspection.findings.filter { $0.comparisonStatus == .new }.count
+    }
+
+    private var changedCount: Int {
+        inspection.findings.filter { $0.comparisonStatus == .changed }.count
+    }
+
+    private var highSeverityCount: Int {
+        inspection.findings.filter { $0.severity == .high }.count
     }
 }
 

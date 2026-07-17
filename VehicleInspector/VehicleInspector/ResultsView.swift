@@ -23,11 +23,15 @@ struct ResultsView: View {
     }
 
     var newFindings: [DamageFinding] {
-        activeFindings.filter(\.isNew)
+        activeFindings.filter { $0.comparisonStatus == .new }
+    }
+
+    var changedFindings: [DamageFinding] {
+        activeFindings.filter { $0.comparisonStatus == .changed }
     }
 
     var existingFindings: [DamageFinding] {
-        activeFindings.filter { !$0.isNew }
+        activeFindings.filter { $0.comparisonStatus == .existing }
     }
 
     var body: some View {
@@ -46,7 +50,7 @@ struct ResultsView: View {
                     visualReview
 
                     FindingSection(
-                        title: "Possible new damage",
+                        title: "New damage",
                         emptyText: "No new damage detected.",
                         findings: newFindings,
                         onConfirm: confirmFinding,
@@ -55,8 +59,17 @@ struct ResultsView: View {
                         onNoteChange: updateFindingNote
                     )
                     FindingSection(
-                        title: "Previously recorded damage",
-                        emptyText: "No previous damage in this inspection.",
+                        title: "Changed / needs review",
+                        emptyText: "No changed damage detected.",
+                        findings: changedFindings,
+                        onConfirm: confirmFinding,
+                        onDismiss: dismissFinding,
+                        onSeverityChange: updateFindingSeverity,
+                        onNoteChange: updateFindingNote
+                    )
+                    FindingSection(
+                        title: "Existing damage",
+                        emptyText: "No existing damage matched.",
                         findings: existingFindings,
                         onConfirm: confirmFinding,
                         onDismiss: dismissFinding,
@@ -96,7 +109,7 @@ struct ResultsView: View {
                             .foregroundStyle(AppTheme.muted)
                     }
                     Spacer()
-                    StatusPill(text: "\(newFindings.count) new", systemImage: "exclamationmark.triangle", color: AppTheme.warning)
+                    StatusPill(text: "\(newFindings.count) new · \(changedFindings.count) changed", systemImage: "exclamationmark.triangle", color: changedFindings.isEmpty ? AppTheme.warning : .orange)
                 }
 
                 Divider()
@@ -105,7 +118,7 @@ struct ResultsView: View {
                     ResultMetric(title: "Status", value: currentInspection.status.rawValue)
                     ResultMetric(title: "Photos", value: "\(currentInspection.photos.filter(\.captured).count)")
                     ResultMetric(title: "Active", value: "\(activeFindings.count)")
-                    ResultMetric(title: "Avg. conf.", value: averageConfidence)
+                    ResultMetric(title: "High", value: "\(highSeverityCount)")
                 }
 
                 Button {
@@ -178,14 +191,14 @@ struct ResultsView: View {
                     .foregroundStyle(AppTheme.ink)
 
                 if let previousInspection {
-                    Text("Compared with \(previousInspection.date.shortInspectionDate). New findings are marked separately from previously recorded damage.")
+                    Text("Compared with \(previousInspection.date.shortInspectionDate). Findings are separated into new, existing, and changed damage that needs review.")
                         .font(.footnote)
                         .foregroundStyle(AppTheme.muted)
 
                     HStack {
                         ResultMetric(title: "Previous findings", value: "\(previousInspection.findings.count)")
                         ResultMetric(title: "Current findings", value: "\(currentInspection.findings.count)")
-                        ResultMetric(title: "Possible new", value: "\(newFindings.count)")
+                        ResultMetric(title: "Changed", value: "\(changedFindings.count)")
                     }
                 } else {
                     Text("No earlier inspection is available for this vehicle yet.")
@@ -305,6 +318,10 @@ struct ResultsView: View {
         return "\(Int(average * 100))%"
     }
 
+    private var highSeverityCount: Int {
+        activeFindings.filter { $0.severity == .high }.count
+    }
+
     private var previousInspection: Inspection? {
         store.inspections(for: vehicle).first { $0.id != currentInspection.id && $0.date < currentInspection.date }
     }
@@ -386,7 +403,9 @@ struct ResultsView: View {
                             y: min(max(region.minY + finding.region.y * region.height, 0), 1),
                             width: min(max(finding.region.width * region.width, 0.01), 1),
                             height: min(max(finding.region.height * region.height, 0.01), 1)
-                        )
+                        ),
+                        comparisonStatus: finding.comparisonStatus,
+                        comparisonReason: finding.comparisonReason
                     )
                 }
 
@@ -526,11 +545,11 @@ struct DamagePhotoCard: View {
                                 Text("\(index + 1)")
                                     .font(.caption.bold())
                                     .frame(width: 22, height: 22)
-                                    .background(finding.isNew ? AppTheme.warning : AppTheme.accent)
+                                    .background(finding.comparisonStatus.color)
                                     .foregroundStyle(.white)
                                     .clipShape(Circle())
 
-                                Text("\(finding.type.rawValue) · \(finding.location)")
+                                Text("\(finding.comparisonStatus.shortLabel) · \(finding.type.rawValue) · \(finding.location)")
                                     .font(.footnote)
                                     .foregroundStyle(AppTheme.muted)
                                     .lineLimit(2)
@@ -1072,8 +1091,16 @@ struct FindingRow: View {
                             } label: {
                                 StatusPill(text: finding.severity.rawValue, systemImage: "gauge.with.dots.needle.50percent", color: finding.severity.color)
                             }
+                            StatusPill(text: finding.comparisonStatus.shortLabel, systemImage: finding.comparisonStatus.icon, color: finding.comparisonStatus.color)
                             StatusPill(text: finding.angle.rawValue, systemImage: "viewfinder", color: AppTheme.accent)
                             StatusPill(text: finding.reviewStatus.rawValue, systemImage: finding.reviewStatus.icon, color: finding.reviewStatus.color)
+                        }
+
+                        if !finding.comparisonReason.isEmpty {
+                            Text(finding.comparisonReason)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }

@@ -78,7 +78,8 @@ struct VehicleDamageAnalysisService {
                     y: finding.region.y,
                     width: finding.region.width,
                     height: finding.region.height
-                )
+                ),
+                comparisonStatus: finding.isNew ? .new : .existing
             )
         }
     }
@@ -182,6 +183,8 @@ struct VehicleDamageAnalysisService {
                     location: finding.location,
                     confidence: finding.confidence,
                     isNew: finding.isNew,
+                    comparisonStatus: finding.comparisonStatus.rawValue,
+                    comparisonReason: finding.comparisonReason,
                     region: CloudDamageRegion(
                         x: finding.region.x,
                         y: finding.region.y,
@@ -466,6 +469,8 @@ private struct CloudSavedFinding: Decodable {
     let location: String
     let confidence: FlexibleDouble
     let isNew: Bool
+    let comparisonStatus: String?
+    let comparisonReason: String?
     let region: CloudDamageRegion
     let note: String?
 
@@ -478,6 +483,8 @@ private struct CloudSavedFinding: Decodable {
         case location
         case confidence
         case isNew = "is_new"
+        case comparisonStatus = "comparison_status"
+        case comparisonReason = "comparison_reason"
         case region
         case note
     }
@@ -500,6 +507,8 @@ private struct CloudSavedFinding: Decodable {
             confidence: confidence.value,
             isNew: isNew,
             region: DamageRegion(x: region.x, y: region.y, width: region.width, height: region.height),
+            comparisonStatus: DamageComparisonStatus(rawValue: comparisonStatus ?? "") ?? (isNew ? .new : .existing),
+            comparisonReason: comparisonReason ?? "",
             note: note ?? ""
         )
     }
@@ -546,6 +555,8 @@ private struct CloudDamageFinding: Encodable {
     let location: String
     let confidence: Double
     let isNew: Bool
+    let comparisonStatus: String
+    let comparisonReason: String
     let region: CloudDamageRegion
     let note: String
 }

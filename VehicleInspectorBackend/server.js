@@ -378,11 +378,16 @@ async function initializeDatabase() {
       location TEXT NOT NULL,
       confidence NUMERIC,
       is_new BOOLEAN NOT NULL DEFAULT FALSE,
+      comparison_status TEXT NOT NULL DEFAULT 'New damage',
+      comparison_reason TEXT,
       region JSONB NOT NULL DEFAULT '{}'::jsonb,
       note TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS comparison_status TEXT NOT NULL DEFAULT 'New damage'");
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS comparison_reason TEXT");
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS checklist_items (
@@ -432,6 +437,7 @@ async function createInspection(vehicleId, body) {
 
   try {
     await client.query("BEGIN");
+    const previousFindings = await getPreviousInspectionFindings(client, vehicleId);
 
     const inspectionResult = await client.query(
       `INSERT INTO inspections (id, vehicle_id, status, odometer_text, inspector_notes, ai_analyzed, summary)
@@ -475,22 +481,27 @@ async function createInspection(vehicleId, body) {
     }
 
     for (const finding of findings) {
+      const normalizedFinding = normalizeFindingInput(finding);
+      const comparison = classifyFindingAgainstPrevious(normalizedFinding, previousFindings);
+
       await client.query(
         `INSERT INTO damage_findings
-          (id, inspection_id, photo_id, angle, type, severity, location, confidence, is_new, region, note)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          (id, inspection_id, photo_id, angle, type, severity, location, confidence, is_new, comparison_status, comparison_reason, region, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           randomUUID(),
           inspectionId,
-          cleanOptionalString(finding.photoID),
-          cleanOptionalString(finding.angle),
-          DAMAGE_TYPES.includes(finding.type) ? finding.type : "Scratch",
-          SEVERITIES.includes(finding.severity) ? finding.severity : "Low",
-          cleanOptionalString(finding.location) || "Vehicle damage",
-          clampConfidence(finding.confidence),
-          Boolean(finding.isNew),
-          JSON.stringify(finding.region || {}),
-          cleanOptionalString(finding.note),
+          normalizedFinding.photoID,
+          normalizedFinding.angle,
+          normalizedFinding.type,
+          normalizedFinding.severity,
+          normalizedFinding.location,
+          normalizedFinding.confidence,
+          comparison.status !== "Existing damage",
+          comparison.status,
+          comparison.reason,
+          JSON.stringify(normalizedFinding.region),
+          normalizedFinding.note,
         ]
       );
     }
@@ -546,6 +557,172 @@ async function getInspection(inspectionId) {
     findings: findings.rows,
     checklist: checklist.rows,
   };
+}
+
+async function getPreviousInspectionFindings(client, vehicleId) {
+  const result = await client.query(
+    `WITH previous_inspection AS (
+       SELECT id
+       FROM inspections
+       WHERE vehicle_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1
+     )
+     SELECT f.*
+     FROM damage_findings f
+     JOIN previous_inspection p ON p.id = f.inspection_id
+     ORDER BY f.created_at ASC`,
+    [vehicleId]
+  );
+
+  return result.rows.map((row) => ({
+    angle: cleanOptionalString(row.angle),
+    type: row.type,
+    severity: row.severity,
+    location: row.location,
+    region: normalizeRegion(row.region),
+  }));
+}
+
+function normalizeFindingInput(finding) {
+  return {
+    photoID: cleanOptionalString(finding.photoID),
+    angle: ALLOWED_ANGLES.includes(finding.angle) ? finding.angle : cleanOptionalString(finding.angle),
+    type: DAMAGE_TYPES.includes(finding.type) ? finding.type : "Scratch",
+    severity: SEVERITIES.includes(finding.severity) ? finding.severity : "Low",
+    location: cleanOptionalString(finding.location) || "Vehicle damage",
+    confidence: clampConfidence(finding.confidence),
+    region: normalizeRegion(finding.region),
+    note: cleanOptionalString(finding.note),
+  };
+}
+
+function classifyFindingAgainstPrevious(finding, previousFindings) {
+  const candidates = previousFindings.filter((previous) => previous.angle === finding.angle);
+  if (candidates.length === 0) {
+    return { status: "New damage", reason: "No previous finding was recorded for this angle." };
+  }
+
+  let bestMatch = null;
+  for (const previous of candidates) {
+    const score = comparisonScore(finding, previous);
+    if (!bestMatch || score.total > bestMatch.score.total) {
+      bestMatch = { previous, score };
+    }
+  }
+
+  if (!bestMatch || bestMatch.score.total < 0.52) {
+    return { status: "New damage", reason: "No close match was found in the previous inspection." };
+  }
+
+  const sameSeverity = bestMatch.previous.severity === finding.severity;
+  const changedSeverity = Math.abs(severityRank(bestMatch.previous.severity) - severityRank(finding.severity)) >= 1;
+  const shiftedRegion = bestMatch.score.centerDistance > 0.20 && bestMatch.score.iou < 0.10;
+
+  if (bestMatch.score.total >= 0.66 && sameSeverity && !shiftedRegion) {
+    return {
+      status: "Existing damage",
+      reason: `Matched previous ${bestMatch.previous.type.toLowerCase()} at ${bestMatch.previous.location}.`,
+    };
+  }
+
+  if (bestMatch.score.total >= 0.56 && (changedSeverity || shiftedRegion || bestMatch.previous.type !== finding.type)) {
+    return {
+      status: "Possible changed damage",
+      reason: `Similar previous damage was found at ${bestMatch.previous.location}, but severity, type, or position may have changed.`,
+    };
+  }
+
+  if (bestMatch.score.total >= 0.62) {
+    return {
+      status: "Existing damage",
+      reason: `Matched previous damage at ${bestMatch.previous.location}.`,
+    };
+  }
+
+  return {
+    status: "New damage",
+    reason: "The closest previous finding was not similar enough.",
+  };
+}
+
+function comparisonScore(current, previous) {
+  const iou = regionIntersectionOverUnion(current.region, previous.region);
+  const centerDistance = regionCenterDistance(current.region, previous.region);
+  const locationOverlap = wordOverlap(current.location, previous.location);
+  let total = 0;
+
+  if (current.type === previous.type) total += 0.32;
+  if (current.angle === previous.angle) total += 0.12;
+  if (current.severity === previous.severity) total += 0.08;
+  if (centerDistance < 0.12) total += 0.24;
+  else if (centerDistance < 0.22) total += 0.16;
+  else if (centerDistance < 0.34) total += 0.08;
+  if (iou > 0.20) total += 0.18;
+  else if (iou > 0.08) total += 0.12;
+  else if (iou > 0.02) total += 0.06;
+  if (locationOverlap > 0.35) total += 0.14;
+  else if (locationOverlap > 0.15) total += 0.08;
+
+  return { total, iou, centerDistance, locationOverlap };
+}
+
+function normalizeRegion(region) {
+  const source = region && typeof region === "object" ? region : {};
+  return {
+    x: clampUnit(source.x, 0),
+    y: clampUnit(source.y, 0),
+    width: clampUnit(source.width, 0.12),
+    height: clampUnit(source.height, 0.12),
+  };
+}
+
+function clampUnit(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(1, number));
+}
+
+function regionCenterDistance(left, right) {
+  const leftCenterX = left.x + left.width / 2;
+  const leftCenterY = left.y + left.height / 2;
+  const rightCenterX = right.x + right.width / 2;
+  const rightCenterY = right.y + right.height / 2;
+  return Math.hypot(leftCenterX - rightCenterX, leftCenterY - rightCenterY);
+}
+
+function regionIntersectionOverUnion(left, right) {
+  const x1 = Math.max(left.x, right.x);
+  const y1 = Math.max(left.y, right.y);
+  const x2 = Math.min(left.x + left.width, right.x + right.width);
+  const y2 = Math.min(left.y + left.height, right.y + right.height);
+  const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = left.width * left.height + right.width * right.height - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function wordOverlap(left, right) {
+  const leftWords = new Set(String(left || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2));
+  const rightWords = new Set(String(right || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2));
+  if (leftWords.size === 0 || rightWords.size === 0) {
+    return 0;
+  }
+
+  let matches = 0;
+  for (const word of leftWords) {
+    if (rightWords.has(word)) {
+      matches += 1;
+    }
+  }
+
+  return matches / Math.max(leftWords.size, rightWords.size);
+}
+
+function severityRank(severity) {
+  return SEVERITIES.indexOf(severity);
 }
 
 function clampConfidence(value) {

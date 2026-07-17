@@ -101,6 +101,36 @@ struct InspectionPhoto: Identifiable, Hashable {
     var imageURL: URL?
 }
 
+enum DamageComparisonStatus: String, Hashable {
+    case new = "New damage"
+    case existing = "Existing damage"
+    case changed = "Possible changed damage"
+
+    var shortLabel: String {
+        switch self {
+        case .new: return "New"
+        case .existing: return "Existing"
+        case .changed: return "Changed"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .new: return "sparkle.magnifyingglass"
+        case .existing: return "clock.arrow.circlepath"
+        case .changed: return "exclamationmark.arrow.triangle.2.circlepath"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .new: return AppTheme.warning
+        case .existing: return AppTheme.accent
+        case .changed: return .orange
+        }
+    }
+}
+
 struct DamageFinding: Identifiable, Hashable {
     let id: UUID
     let photoID: UUID?
@@ -111,6 +141,8 @@ struct DamageFinding: Identifiable, Hashable {
     let confidence: Double
     let isNew: Bool
     let region: DamageRegion
+    var comparisonStatus: DamageComparisonStatus = .new
+    var comparisonReason: String = ""
     var reviewStatus: FindingReviewStatus = .pending
     var note: String = ""
 }
