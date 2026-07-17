@@ -16,10 +16,10 @@ const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 const DEFAULT_OPENAI_MODELS = [
-  "gpt-4.1-mini",
-  "gpt-4.1",
   "gpt-5.4-mini",
   "gpt-5.4-mini-2026-03-17",
+  "gpt-4.1-mini",
+  "gpt-4.1",
   "gpt-5-mini",
 ];
 const OPENAI_MODELS = (process.env.OPENAI_MODELS || process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODELS.join(","))

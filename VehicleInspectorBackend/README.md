@@ -10,10 +10,10 @@ cd VehicleInspectorBackend
 HOST=0.0.0.0 node server.js
 ```
 
-The backend tries `gpt-4.1-mini`, `gpt-4.1`, `gpt-5.4-mini`, `gpt-5.4-mini-2026-03-17`, and then `gpt-5-mini` by default. If your project has access to different models, you can change the candidate list like this:
+The backend tries `gpt-5.4-mini`, `gpt-5.4-mini-2026-03-17`, `gpt-4.1-mini`, `gpt-4.1`, and then `gpt-5-mini` by default. If your project has access to different models, you can change the candidate list like this:
 
 ```bash
-OPENAI_MODELS="gpt-4.1-mini,gpt-4.1,gpt-5.4-mini,gpt-5.4-mini-2026-03-17,gpt-5-mini" HOST=0.0.0.0 node server.js
+OPENAI_MODELS="gpt-5.4-mini,gpt-5.4-mini-2026-03-17,gpt-4.1-mini,gpt-4.1,gpt-5-mini" HOST=0.0.0.0 node server.js
 ```
 
 The backend runs a second verification pass by default to reduce false positives. You can tune it like this:
@@ -82,7 +82,7 @@ DATABASE_URL=your_render_internal_database_url
 CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
 CLOUDINARY_API_KEY=your_cloudinary_api_key
 CLOUDINARY_API_SECRET=your_cloudinary_api_secret
-OPENAI_MODELS=gpt-4.1-mini,gpt-4.1,gpt-5.4-mini,gpt-5.4-mini-2026-03-17,gpt-5-mini
+OPENAI_MODELS=gpt-5.4-mini,gpt-5.4-mini-2026-03-17,gpt-4.1-mini,gpt-4.1,gpt-5-mini
 VERIFY_ANALYSIS=true
 MIN_CONFIDENCE=0.45
 ```
