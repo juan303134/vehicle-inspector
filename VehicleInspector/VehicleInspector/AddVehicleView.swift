@@ -27,7 +27,11 @@ struct AddVehicleView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        store.addVehicle(plate: plate, makeModel: makeModel, color: color)
+                        let vehicle = store.addVehicle(plate: plate, makeModel: makeModel, color: color)
+                        Task {
+                            try? await VehicleDamageAnalysisService.shared.saveVehicle(vehicle)
+                            await store.loadCloudVehicles()
+                        }
                         dismiss()
                     }
                     .disabled(plate.trimmingCharacters(in: .whitespaces).isEmpty || makeModel.trimmingCharacters(in: .whitespaces).isEmpty)

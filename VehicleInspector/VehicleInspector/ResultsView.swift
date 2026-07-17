@@ -366,7 +366,7 @@ struct ResultsView: View {
         isFocusedAnalyzing = true
         reanalysisMessage = "Analyzing selected area with artificial intelligence."
 
-        let focusedPhoto = InspectionPhoto(id: photo.id, angle: photo.angle, captured: true, imageData: croppedData)
+        let focusedPhoto = InspectionPhoto(id: photo.id, angle: photo.angle, captured: true, imageData: croppedData, imageURL: nil)
 
         Task {
             do {
@@ -464,6 +464,7 @@ struct DamagePhotoCard: View {
     let onFocusedAnalyze: (InspectionPhoto, CGRect) -> Void
 
     @State private var showingPhotoViewer = false
+    @State private var remoteImageData: Data?
 
     var body: some View {
         SurfaceCard {
@@ -548,21 +549,47 @@ struct DamagePhotoCard: View {
         }
         .fullScreenCover(isPresented: $showingPhotoViewer) {
             if let image = uiImage {
-                DamagePhotoViewer(
-                    angle: angle,
-                    photo: photo,
-                    image: image,
-                    findings: findings,
-                    isFocusedAnalyzing: isFocusedAnalyzing,
-                    onFocusedAnalyze: onFocusedAnalyze
-                )
+                        DamagePhotoViewer(
+                            angle: angle,
+                    photo: photoForAnalysis,
+                            image: image,
+                            findings: findings,
+                            isFocusedAnalyzing: isFocusedAnalyzing,
+                            onFocusedAnalyze: onFocusedAnalyze
+                        )
             }
+        }
+        .task(id: photo.imageURL) {
+            await loadRemoteImageIfNeeded()
         }
     }
 
     private var uiImage: UIImage? {
-        guard let imageData = photo.imageData else { return nil }
+        guard let imageData = photo.imageData ?? remoteImageData else { return nil }
         return UIImage(data: imageData)
+    }
+
+    private var photoForAnalysis: InspectionPhoto {
+        InspectionPhoto(id: photo.id, angle: photo.angle, captured: photo.captured, imageData: photo.imageData ?? remoteImageData, imageURL: photo.imageURL)
+    }
+
+    private func loadRemoteImageIfNeeded() async {
+        guard remoteImageData == nil,
+              photo.imageData == nil,
+              let imageURL = photo.imageURL else {
+            return
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: imageURL)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode) else {
+                return
+            }
+            remoteImageData = data
+        } catch {
+            remoteImageData = nil
+        }
     }
 }
 

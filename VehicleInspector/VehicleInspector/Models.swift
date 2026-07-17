@@ -98,6 +98,7 @@ struct InspectionPhoto: Identifiable, Hashable {
     let angle: InspectionAngle
     var captured: Bool
     var imageData: Data?
+    var imageURL: URL?
 }
 
 struct DamageFinding: Identifiable, Hashable {

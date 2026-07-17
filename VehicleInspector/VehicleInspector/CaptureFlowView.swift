@@ -628,7 +628,7 @@ struct CaptureFlowView: View {
     private func analyzeInspection() {
         let photos = requiredAngles.flatMap { angle in
             (capturedImages[angle] ?? []).map { imageData in
-                InspectionPhoto(id: UUID(), angle: angle, captured: true, imageData: imageData)
+                InspectionPhoto(id: UUID(), angle: angle, captured: true, imageData: imageData, imageURL: nil)
             }
         }
 

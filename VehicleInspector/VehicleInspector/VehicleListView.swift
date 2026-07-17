@@ -16,14 +16,23 @@ struct VehicleListView: View {
                         BackendStatusBanner(status: backendStatus) {
                             checkBackendConnection()
                         }
+                        if store.isLoadingCloudData || store.cloudMessage != nil {
+                            CloudStatusBanner(message: store.cloudMessage ?? "Loading vehicles and inspection history.", isLoading: store.isLoadingCloudData) {
+                                loadCloudVehicles()
+                            }
+                        }
                         summaryStrip
 
                         VStack(spacing: 12) {
-                            ForEach(store.vehicles) { vehicle in
-                                NavigationLink(value: vehicle) {
-                                    VehicleRow(vehicle: vehicle, inspectionCount: store.inspections(for: vehicle).count)
+                            if store.vehicles.isEmpty && !store.isLoadingCloudData {
+                                EmptyVehicleListView()
+                            } else {
+                                ForEach(store.vehicles) { vehicle in
+                                    NavigationLink(value: vehicle) {
+                                        VehicleRow(vehicle: vehicle, inspectionCount: store.inspections(for: vehicle).count)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -38,8 +47,18 @@ struct VehicleListView: View {
             }
             .task {
                 checkBackendConnection()
+                loadCloudVehicles()
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        loadCloudVehicles()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Refresh cloud data")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddVehicle = true
@@ -71,6 +90,12 @@ struct VehicleListView: View {
         }
     }
 
+    private func loadCloudVehicles() {
+        Task {
+            await store.loadCloudVehicles()
+        }
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Inspections")
@@ -87,6 +112,66 @@ struct VehicleListView: View {
         HStack(spacing: 10) {
             SummaryMetric(title: "Vehicles", value: "\(store.vehicles.count)", icon: "car.2")
             SummaryMetric(title: "Today", value: "\(store.inspections.filter { Calendar.current.isDateInToday($0.date) }.count)", icon: "checklist")
+        }
+    }
+}
+
+struct CloudStatusBanner: View {
+    let message: String
+    let isLoading: Bool
+    let onRefresh: () -> Void
+
+    var body: some View {
+        SurfaceCard {
+            HStack(spacing: 12) {
+                Image(systemName: isLoading ? "icloud.and.arrow.down" : "icloud")
+                    .font(.title3)
+                    .foregroundStyle(AppTheme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(isLoading ? "Loading cloud data" : "Cloud data")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.ink)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                }
+
+                Spacer()
+
+                Button {
+                    onRefresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.subheadline.weight(.bold))
+                        .frame(width: 34, height: 34)
+                        .background(AppTheme.accent.opacity(0.12))
+                        .foregroundStyle(AppTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .accessibilityLabel("Refresh cloud data")
+            }
+        }
+    }
+}
+
+struct EmptyVehicleListView: View {
+    var body: some View {
+        SurfaceCard {
+            VStack(spacing: 10) {
+                Image(systemName: "car.2")
+                    .font(.largeTitle)
+                    .foregroundStyle(AppTheme.accent)
+                Text("No cloud vehicles yet")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.ink)
+                Text("Create a vehicle or complete an inspection to save it in the cloud.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 }

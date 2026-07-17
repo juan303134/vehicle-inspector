@@ -51,6 +51,32 @@ struct VehicleDetailView: View {
                         .foregroundStyle(AppTheme.ink)
                         .padding(.top, 6)
 
+                    HStack {
+                        if store.isLoadingCloudData {
+                            Label("Loading cloud history...", systemImage: "icloud.and.arrow.down")
+                                .font(.footnote)
+                                .foregroundStyle(AppTheme.muted)
+                        } else {
+                            Label("Cloud history", systemImage: "icloud")
+                                .font(.footnote)
+                                .foregroundStyle(AppTheme.muted)
+                        }
+
+                        Spacer()
+
+                        Button {
+                            loadCloudHistory()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(width: 34, height: 34)
+                                .background(AppTheme.accent.opacity(0.12))
+                                .foregroundStyle(AppTheme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .accessibilityLabel("Refresh cloud history")
+                    }
+
                     if store.inspections(for: currentVehicle).isEmpty {
                         EmptyHistoryView()
                     } else {
@@ -69,6 +95,15 @@ struct VehicleDetailView: View {
         }
         .navigationTitle(currentVehicle.plate)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: currentVehicle.id) {
+            await store.loadCloudInspections(for: currentVehicle)
+        }
+    }
+
+    private func loadCloudHistory() {
+        Task {
+            await store.loadCloudInspections(for: currentVehicle)
+        }
     }
 
     private var vehicleHeader: some View {

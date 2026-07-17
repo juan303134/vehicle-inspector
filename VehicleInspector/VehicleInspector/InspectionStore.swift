@@ -2,20 +2,52 @@ import Foundation
 
 @MainActor
 final class InspectionStore: ObservableObject {
-    @Published var vehicles: [Vehicle] = [
-        Vehicle(id: UUID(), plate: "TXK-482", makeModel: "Toyota Corolla 2023", color: "White", lastInspectionDate: Calendar.current.date(byAdding: .day, value: -1, to: Date())),
-        Vehicle(id: UUID(), plate: "LMP-914", makeModel: "Ford Transit 2022", color: "Gray", lastInspectionDate: Calendar.current.date(byAdding: .day, value: -2, to: Date()))
-    ]
+    @Published var vehicles: [Vehicle] = []
 
     @Published var inspections: [Inspection] = []
+    @Published var isLoadingCloudData = false
+    @Published var cloudMessage: String?
 
-    init() {
-        seedInspections()
-    }
-
-    func addVehicle(plate: String, makeModel: String, color: String) {
+    func addVehicle(plate: String, makeModel: String, color: String) -> Vehicle {
         let vehicle = Vehicle(id: UUID(), plate: plate.uppercased(), makeModel: makeModel, color: color, lastInspectionDate: nil)
         vehicles.insert(vehicle, at: 0)
+        return vehicle
+    }
+
+    func loadCloudVehicles() async {
+        isLoadingCloudData = true
+        cloudMessage = nil
+
+        do {
+            vehicles = try await VehicleDamageAnalysisService.shared.fetchVehicles()
+            cloudMessage = "Cloud vehicles loaded."
+        } catch {
+            cloudMessage = "Could not load cloud vehicles."
+        }
+
+        isLoadingCloudData = false
+    }
+
+    func loadCloudInspections(for vehicle: Vehicle) async {
+        isLoadingCloudData = true
+        cloudMessage = nil
+
+        do {
+            let loadedInspections = try await VehicleDamageAnalysisService.shared.fetchInspections(vehicleID: vehicle.id)
+            inspections.removeAll { $0.vehicleID == vehicle.id }
+            inspections.append(contentsOf: loadedInspections)
+
+            if let latestDate = loadedInspections.map(\.date).max(),
+               let vehicleIndex = vehicles.firstIndex(where: { $0.id == vehicle.id }) {
+                vehicles[vehicleIndex].lastInspectionDate = latestDate
+            }
+
+            cloudMessage = "Cloud inspections loaded."
+        } catch {
+            cloudMessage = "Could not load cloud inspections."
+        }
+
+        isLoadingCloudData = false
     }
 
     func inspections(for vehicle: Vehicle) -> [Inspection] {
@@ -56,6 +88,15 @@ final class InspectionStore: ObservableObject {
         }
 
         return inspection
+    }
+
+    func upsertInspection(_ inspection: Inspection) {
+        inspections.removeAll { $0.id == inspection.id }
+        inspections.insert(inspection, at: 0)
+
+        if let index = vehicles.firstIndex(where: { $0.id == inspection.vehicleID }) {
+            vehicles[index].lastInspectionDate = inspection.date
+        }
     }
 
     func fallbackFindings(for photos: [InspectionPhoto]) -> [DamageFinding] {
@@ -124,32 +165,6 @@ final class InspectionStore: ObservableObject {
         inspections[inspectionIndex].findings.append(contentsOf: findings)
         inspections[inspectionIndex].analysisSource = source
         inspections[inspectionIndex].status = inspections[inspectionIndex].findings.isEmpty ? .completed : .needsReview
-    }
-
-    private func seedInspections() {
-        guard let first = vehicles.first else { return }
-
-        let photos = InspectionAngle.guidedAngles.map {
-            InspectionPhoto(id: UUID(), angle: $0, captured: true, imageData: nil)
-        }
-
-        inspections = [
-            Inspection(
-                id: UUID(),
-                vehicleID: first.id,
-                date: Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date(),
-                photos: photos,
-                findings: [
-                    DamageFinding(id: UUID(), photoID: nil, angle: .driver, type: .scratch, severity: .low, location: "Lower driver door area", confidence: 0.88, isNew: false, region: DamageRegion(x: 0.33, y: 0.58, width: 0.28, height: 0.14)),
-                    DamageFinding(id: UUID(), photoID: nil, angle: .rear, type: .paint, severity: .medium, location: "Right rear bumper", confidence: 0.81, isNew: false, region: DamageRegion(x: 0.58, y: 0.64, width: 0.22, height: 0.16))
-                ],
-                analysisSource: .simulated,
-                status: .needsReview,
-                checklist: InspectionChecklistItem.defaults,
-                inspectorNotes: "Previous inspection record.",
-                odometerText: "42,180"
-            )
-        ]
     }
 
     private func mockFindings(for photos: [InspectionPhoto]) -> [DamageFinding] {
