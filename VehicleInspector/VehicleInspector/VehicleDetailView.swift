@@ -3,6 +3,8 @@ import SwiftUI
 struct VehicleDetailView: View {
     @EnvironmentObject private var store: InspectionStore
     let vehicle: Vehicle
+    @State private var pendingDeleteInspection: Inspection?
+    @State private var isDeletingInspection = false
 
     var currentVehicle: Vehicle {
         store.vehicles.first(where: { $0.id == vehicle.id }) ?? vehicle
@@ -81,12 +83,29 @@ struct VehicleDetailView: View {
                         EmptyHistoryView()
                     } else {
                         ForEach(store.inspections(for: currentVehicle)) { inspection in
-                            NavigationLink {
-                                ResultsView(vehicle: currentVehicle, inspection: inspection)
-                            } label: {
-                                InspectionHistoryRow(inspection: inspection)
+                            SurfaceCard {
+                                HStack(spacing: 10) {
+                                    NavigationLink {
+                                        ResultsView(vehicle: currentVehicle, inspection: inspection)
+                                    } label: {
+                                        InspectionHistoryRow(inspection: inspection)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(role: .destructive) {
+                                        pendingDeleteInspection = inspection
+                                    } label: {
+                                        Image(systemName: isDeletingInspection && pendingDeleteInspection?.id == inspection.id ? "hourglass" : "trash")
+                                            .font(.subheadline.weight(.semibold))
+                                            .frame(width: 36, height: 36)
+                                            .background(Color.red.opacity(0.10))
+                                            .foregroundStyle(.red)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    }
+                                    .disabled(isDeletingInspection)
+                                    .accessibilityLabel("Delete inspection")
+                                }
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -98,11 +117,55 @@ struct VehicleDetailView: View {
         .task(id: currentVehicle.id) {
             await store.loadCloudInspections(for: currentVehicle)
         }
+        .confirmationDialog(
+            "Delete this inspection?",
+            isPresented: Binding(
+                get: { pendingDeleteInspection != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingDeleteInspection = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete inspection", role: .destructive) {
+                deletePendingInspection()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteInspection = nil
+            }
+        } message: {
+            Text("This removes the report, photos from Cloudinary, and cloud database records.")
+        }
     }
 
     private func loadCloudHistory() {
         Task {
             await store.loadCloudInspections(for: currentVehicle)
+        }
+    }
+
+    private func deletePendingInspection() {
+        guard let inspection = pendingDeleteInspection else { return }
+
+        isDeletingInspection = true
+
+        Task {
+            do {
+                try await VehicleDamageAnalysisService.shared.deleteInspection(inspectionID: inspection.id)
+                await MainActor.run {
+                    store.removeInspection(inspection)
+                    pendingDeleteInspection = nil
+                    isDeletingInspection = false
+                }
+            } catch {
+                await MainActor.run {
+                    store.cloudMessage = "Could not delete inspection."
+                    pendingDeleteInspection = nil
+                    isDeletingInspection = false
+                }
+            }
         }
     }
 
@@ -149,22 +212,20 @@ struct InspectionHistoryRow: View {
     let inspection: Inspection
 
     var body: some View {
-        SurfaceCard {
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(inspection.date.shortInspectionDate)
-                        .font(.headline)
-                        .foregroundStyle(AppTheme.ink)
-                    Text("\(inspection.photos.count) photos · \(inspection.findings.count) findings · \(highSeverityCount) high")
-                        .font(.subheadline)
-                        .foregroundStyle(AppTheme.muted)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
-                    StatusPill(text: "\(newCount) new", systemImage: "sparkle.magnifyingglass", color: AppTheme.warning)
-                    if changedCount > 0 {
-                        StatusPill(text: "\(changedCount) changed", systemImage: "exclamationmark.arrow.triangle.2.circlepath", color: .orange)
-                    }
+        HStack {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(inspection.date.shortInspectionDate)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.ink)
+                Text("\(inspection.photos.count) photos · \(inspection.findings.count) findings · \(highSeverityCount) high")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.muted)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 6) {
+                StatusPill(text: "\(newCount) new", systemImage: "sparkle.magnifyingglass", color: AppTheme.warning)
+                if changedCount > 0 {
+                    StatusPill(text: "\(changedCount) changed", systemImage: "exclamationmark.arrow.triangle.2.circlepath", color: .orange)
                 }
             }
         }

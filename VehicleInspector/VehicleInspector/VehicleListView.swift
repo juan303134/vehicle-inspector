@@ -4,6 +4,8 @@ struct VehicleListView: View {
     @EnvironmentObject private var store: InspectionStore
     @State private var showingAddVehicle = false
     @State private var backendStatus: BackendConnectionStatus = .checking
+    @State private var showingDeleteAllConfirmation = false
+    @State private var isDeletingAllData = false
 
     var body: some View {
         NavigationStack {
@@ -60,6 +62,16 @@ struct VehicleListView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        showingDeleteAllConfirmation = true
+                    } label: {
+                        Image(systemName: isDeletingAllData ? "hourglass" : "trash")
+                    }
+                    .disabled(isDeletingAllData || store.vehicles.isEmpty)
+                    .accessibilityLabel("Delete all cloud data")
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddVehicle = true
                     } label: {
@@ -67,6 +79,18 @@ struct VehicleListView: View {
                     }
                     .accessibilityLabel("Add vehicle")
                 }
+            }
+            .confirmationDialog(
+                "Delete all data?",
+                isPresented: $showingDeleteAllConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete all vehicles and inspections", role: .destructive) {
+                    deleteAllCloudData()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes all vehicles, inspection reports, photos from Cloudinary, and cloud database records.")
             }
         }
     }
@@ -93,6 +117,25 @@ struct VehicleListView: View {
     private func loadCloudVehicles() {
         Task {
             await store.loadCloudVehicles()
+        }
+    }
+
+    private func deleteAllCloudData() {
+        isDeletingAllData = true
+
+        Task {
+            do {
+                try await VehicleDamageAnalysisService.shared.deleteAllCloudData()
+                await MainActor.run {
+                    store.removeAllCloudDataLocally()
+                    isDeletingAllData = false
+                }
+            } catch {
+                await MainActor.run {
+                    store.cloudMessage = "Could not delete cloud data."
+                    isDeletingAllData = false
+                }
+            }
         }
     }
 

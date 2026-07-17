@@ -99,6 +99,23 @@ final class InspectionStore: ObservableObject {
         }
     }
 
+    func removeInspection(_ inspection: Inspection) {
+        inspections.removeAll { $0.id == inspection.id }
+
+        if let vehicleIndex = vehicles.firstIndex(where: { $0.id == inspection.vehicleID }) {
+            vehicles[vehicleIndex].lastInspectionDate = inspections
+                .filter { $0.vehicleID == inspection.vehicleID }
+                .map(\.date)
+                .max()
+        }
+    }
+
+    func removeAllCloudDataLocally() {
+        vehicles.removeAll()
+        inspections.removeAll()
+        cloudMessage = "All cloud data was deleted."
+    }
+
     func fallbackFindings(for photos: [InspectionPhoto]) -> [DamageFinding] {
         mockFindings(for: photos)
     }

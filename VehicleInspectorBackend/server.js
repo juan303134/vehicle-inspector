@@ -190,6 +190,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "DELETE" && vehicleMatch) {
+    try {
+      await ensureDatabase();
+      const result = await deleteVehicleRecord(vehicleMatch[1]);
+      if (!result.deleted) {
+        sendJson(res, 404, { error: "Vehicle not found" });
+        return;
+      }
+      sendJson(res, 200, result);
+    } catch (error) {
+      handleRouteError(res, error, "Could not delete vehicle");
+    }
+    return;
+  }
+
   const vehicleInspectionsMatch = pathname.match(/^\/vehicles\/([^/]+)\/inspections$/);
   if (req.method === "GET" && vehicleInspectionsMatch) {
     try {
@@ -252,6 +267,38 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { inspection });
     } catch (error) {
       handleRouteError(res, error, "Could not load inspection");
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && inspectionMatch) {
+    try {
+      await ensureDatabase();
+      const result = await deleteInspectionRecord(inspectionMatch[1]);
+      if (!result.deleted) {
+        sendJson(res, 404, { error: "Inspection not found" });
+        return;
+      }
+      sendJson(res, 200, result);
+    } catch (error) {
+      handleRouteError(res, error, "Could not delete inspection");
+    }
+    return;
+  }
+
+  if (req.method === "DELETE" && pathname === "/data") {
+    try {
+      await ensureDatabase();
+      const confirmation = req.headers["x-reset-confirm"];
+      if (confirmation !== "delete-all-vehicle-inspector-data") {
+        sendJson(res, 400, { error: "Missing reset confirmation header" });
+        return;
+      }
+
+      const result = await deleteAllData();
+      sendJson(res, 200, result);
+    } catch (error) {
+      handleRouteError(res, error, "Could not delete all data");
     }
     return;
   }
@@ -554,6 +601,101 @@ async function getInspection(inspectionId) {
   };
 }
 
+async function deleteInspectionRecord(inspectionId) {
+  const client = await db.connect();
+
+  try {
+    await client.query("BEGIN");
+    const inspection = await client.query("SELECT id FROM inspections WHERE id = $1", [inspectionId]);
+    if (inspection.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { deleted: false, cloudinaryDeleted: 0, cloudinaryFailed: 0 };
+    }
+
+    const photos = await client.query(
+      "SELECT cloudinary_public_id FROM inspection_photos WHERE inspection_id = $1 AND cloudinary_public_id IS NOT NULL",
+      [inspectionId]
+    );
+    const cloudinaryResult = await deleteCloudinaryPhotos(photos.rows.map((row) => row.cloudinary_public_id));
+
+    await client.query("DELETE FROM inspections WHERE id = $1", [inspectionId]);
+    await client.query("COMMIT");
+
+    return {
+      deleted: true,
+      cloudinaryDeleted: cloudinaryResult.deleted,
+      cloudinaryFailed: cloudinaryResult.failed,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteVehicleRecord(vehicleId) {
+  const client = await db.connect();
+
+  try {
+    await client.query("BEGIN");
+    const vehicle = await client.query("SELECT id FROM vehicles WHERE id = $1", [vehicleId]);
+    if (vehicle.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { deleted: false, cloudinaryDeleted: 0, cloudinaryFailed: 0 };
+    }
+
+    const photos = await client.query(
+      `SELECT p.cloudinary_public_id
+       FROM inspection_photos p
+       JOIN inspections i ON i.id = p.inspection_id
+       WHERE i.vehicle_id = $1 AND p.cloudinary_public_id IS NOT NULL`,
+      [vehicleId]
+    );
+    const cloudinaryResult = await deleteCloudinaryPhotos(photos.rows.map((row) => row.cloudinary_public_id));
+
+    await client.query("DELETE FROM vehicles WHERE id = $1", [vehicleId]);
+    await client.query("COMMIT");
+
+    return {
+      deleted: true,
+      cloudinaryDeleted: cloudinaryResult.deleted,
+      cloudinaryFailed: cloudinaryResult.failed,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteAllData() {
+  const client = await db.connect();
+
+  try {
+    await client.query("BEGIN");
+    const photos = await client.query(
+      "SELECT cloudinary_public_id FROM inspection_photos WHERE cloudinary_public_id IS NOT NULL"
+    );
+    const cloudinaryResult = await deleteCloudinaryPhotos(photos.rows.map((row) => row.cloudinary_public_id));
+
+    await client.query("DELETE FROM vehicles");
+    await client.query("COMMIT");
+
+    return {
+      deleted: true,
+      cloudinaryDeleted: cloudinaryResult.deleted,
+      cloudinaryFailed: cloudinaryResult.failed,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function getPreviousInspectionFindings(client, vehicleId) {
   const result = await client.query(
     `WITH previous_inspection AS (
@@ -783,6 +925,60 @@ function signCloudinaryParams(params) {
   return createHash("sha1")
     .update(`${payload}${CLOUDINARY_API_SECRET}`)
     .digest("hex");
+}
+
+async function deleteCloudinaryPhotos(publicIds) {
+  const ids = [...new Set(publicIds.filter(Boolean).map(String))];
+  if (!CLOUDINARY_CONFIGURED || ids.length === 0) {
+    return { deleted: 0, failed: 0 };
+  }
+
+  let deleted = 0;
+  let failed = 0;
+
+  for (const publicId of ids) {
+    try {
+      const result = await deleteCloudinaryPhoto(publicId);
+      if (result) {
+        deleted += 1;
+      } else {
+        failed += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      console.warn(`Cloudinary delete failed for ${publicId}: ${error.message}`);
+    }
+  }
+
+  return { deleted, failed };
+}
+
+async function deleteCloudinaryPhoto(publicId) {
+  const destroyUrl = `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/image/destroy`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = signCloudinaryParams({
+    invalidate: "true",
+    public_id: publicId,
+    timestamp,
+  });
+  const form = new FormData();
+  form.append("public_id", publicId);
+  form.append("invalidate", "true");
+  form.append("timestamp", String(timestamp));
+  form.append("api_key", CLOUDINARY_API_KEY);
+  form.append("signature", signature);
+
+  const response = await fetch(destroyUrl, {
+    method: "POST",
+    body: form,
+  });
+  const json = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(json.error?.message || `Cloudinary destroy failed with ${response.status}`);
+  }
+
+  return json.result === "ok" || json.result === "not found";
 }
 
 async function analyzeVehiclePhotos(photos) {

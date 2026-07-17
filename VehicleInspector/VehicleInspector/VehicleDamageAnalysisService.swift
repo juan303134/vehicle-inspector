@@ -149,6 +149,39 @@ struct VehicleDamageAnalysisService {
         return cloudResponse.inspection.inspection
     }
 
+    func deleteInspection(inspectionID: UUID) async throws {
+        let endpoint = baseURL
+            .appendingPathComponent("inspections")
+            .appendingPathComponent(inspectionID.uuidString.lowercased())
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 60
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            throw AnalysisError.backendUnavailable
+        }
+    }
+
+    func deleteAllCloudData() async throws {
+        let endpoint = baseURL.appendingPathComponent("data")
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "DELETE"
+        request.setValue("delete-all-vehicle-inspector-data", forHTTPHeaderField: "x-reset-confirm")
+        request.timeoutInterval = 120
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            throw AnalysisError.backendUnavailable
+        }
+    }
+
     func saveInspection(vehicle: Vehicle, inspection: Inspection) async throws -> Inspection? {
         try await saveVehicle(vehicle)
 
