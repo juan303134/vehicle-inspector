@@ -112,7 +112,7 @@ struct VehicleDetailView: View {
                 .padding(18)
             }
         }
-        .navigationTitle(currentVehicle.plate)
+        .navigationTitle(currentVehicle.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: currentVehicle.id) {
             await store.loadCloudInspections(for: currentVehicle)
@@ -174,10 +174,10 @@ struct VehicleDetailView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(currentVehicle.makeModel)
+                        Text(currentVehicle.displayName)
                             .font(.title3.bold())
                             .foregroundStyle(AppTheme.ink)
-                        Text("Color \(currentVehicle.color)")
+                        Text(vehicleSubtitle)
                             .font(.subheadline)
                             .foregroundStyle(AppTheme.muted)
                     }
@@ -205,6 +205,18 @@ struct VehicleDetailView: View {
         }
 
         return "Last inspection: \(date.shortInspectionDate)"
+    }
+
+    private var vehicleSubtitle: String {
+        var parts: [String] = []
+        if !currentVehicle.detailText.isEmpty {
+            parts.append(currentVehicle.detailText)
+        }
+        if currentVehicle.color != "Unknown" {
+            parts.append("Color \(currentVehicle.color)")
+        }
+
+        return parts.isEmpty ? "No extra vehicle details" : parts.joined(separator: " · ")
     }
 }
 

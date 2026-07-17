@@ -101,7 +101,7 @@ struct ResultsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(vehicle.plate)
+                        Text(vehicle.displayName)
                             .font(.title3.bold())
                             .foregroundStyle(AppTheme.ink)
                         Text(currentInspection.date.shortInspectionDate)
@@ -172,7 +172,7 @@ struct ResultsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    ReportLine(label: "Vehicle", value: "\(vehicle.plate) · \(vehicle.makeModel)")
+                    ReportLine(label: "Vehicle", value: [vehicle.displayName, vehicle.detailText].filter { !$0.isEmpty }.joined(separator: " · "))
                     ReportLine(label: "Date", value: currentInspection.date.shortInspectionDate)
                     ReportLine(label: "Photos", value: "\(currentInspection.photos.filter(\.captured).count)")
                     ReportLine(label: "Confirmed", value: "\(currentInspection.findings.filter { $0.reviewStatus == .confirmed }.count)")

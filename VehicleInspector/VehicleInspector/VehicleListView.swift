@@ -327,7 +327,7 @@ struct VehicleRow: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
-                        Text(vehicle.plate)
+                        Text(vehicle.displayName)
                             .font(.headline)
                             .foregroundStyle(AppTheme.ink)
                         Spacer()
@@ -336,12 +336,14 @@ struct VehicleRow: View {
                             .foregroundStyle(AppTheme.muted)
                     }
 
-                    Text(vehicle.makeModel)
+                    Text(vehicle.detailText.isEmpty ? vehicle.makeModel : vehicle.detailText)
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.muted)
 
                     HStack {
-                        StatusPill(text: vehicle.color, systemImage: "paintpalette", color: AppTheme.accent)
+                        if vehicle.color != "Unknown" {
+                            StatusPill(text: vehicle.color, systemImage: "paintpalette", color: AppTheme.accent)
+                        }
                         Text("\(inspectionCount) inspections")
                             .font(.caption)
                             .foregroundStyle(AppTheme.muted)

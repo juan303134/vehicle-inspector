@@ -256,12 +256,13 @@ struct VehicleDamageAnalysisService {
         let parts = vehicle.makeModel.split(separator: " ", maxSplits: 1).map(String.init)
         let payload = CloudVehicleRequest(
             id: vehicle.id.uuidString,
-            label: "\(vehicle.plate) \(vehicle.makeModel)",
-            plate: vehicle.plate,
+            label: vehicle.displayName,
+            plate: vehicle.plate == "No plate" ? "" : vehicle.plate,
+            vanNumber: vehicle.vanNumber,
             make: parts.first,
             model: parts.count > 1 ? parts[1] : nil,
             year: nil,
-            color: vehicle.color
+            color: vehicle.color == "Unknown" ? "" : vehicle.color
         )
 
         var request = URLRequest(url: vehiclesEndpoint)
@@ -359,10 +360,22 @@ private struct CloudVehicleRequest: Encodable {
     let id: String
     let label: String
     let plate: String
+    let vanNumber: String
     let make: String?
     let model: String?
     let year: Int?
     let color: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case plate
+        case vanNumber = "van_number"
+        case make
+        case model
+        case year
+        case color
+    }
 }
 
 private struct CloudVehiclesResponse: Decodable {
@@ -376,6 +389,7 @@ private struct CloudVehicle: Decodable {
     let model: String?
     let year: Int?
     let color: String?
+    let vanNumber: String?
     let label: String?
     let lastInspectionAt: Date?
 
@@ -386,6 +400,7 @@ private struct CloudVehicle: Decodable {
         case model
         case year
         case color
+        case vanNumber = "van_number"
         case label
         case lastInspectionAt = "last_inspection_at"
     }
@@ -401,8 +416,9 @@ private struct CloudVehicle: Decodable {
         return Vehicle(
             id: uuid,
             plate: plate?.isEmpty == false ? plate! : "No plate",
-            makeModel: makeModel.isEmpty ? (label ?? "Unknown vehicle") : makeModel,
+            makeModel: makeModel.isEmpty ? (vanNumber?.isEmpty == false ? "Unknown vehicle" : (label ?? "Unknown vehicle")) : makeModel,
             color: color?.isEmpty == false ? color! : "Unknown",
+            vanNumber: vanNumber ?? "",
             lastInspectionDate: lastInspectionAt
         )
     }

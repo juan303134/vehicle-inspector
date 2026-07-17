@@ -8,8 +8,19 @@ final class InspectionStore: ObservableObject {
     @Published var isLoadingCloudData = false
     @Published var cloudMessage: String?
 
-    func addVehicle(plate: String, makeModel: String, color: String) -> Vehicle {
-        let vehicle = Vehicle(id: UUID(), plate: plate.uppercased(), makeModel: makeModel, color: color, lastInspectionDate: nil)
+    func addVehicle(plate: String, vanNumber: String, makeModel: String, color: String) -> Vehicle {
+        let normalizedVanNumber = vanNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPlate = plate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let normalizedMakeModel = makeModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedColor = color.trimmingCharacters(in: .whitespacesAndNewlines)
+        let vehicle = Vehicle(
+            id: UUID(),
+            plate: normalizedPlate.isEmpty ? "No plate" : normalizedPlate,
+            makeModel: normalizedMakeModel.isEmpty ? "Unknown vehicle" : normalizedMakeModel,
+            color: normalizedColor.isEmpty ? "Unknown" : normalizedColor,
+            vanNumber: normalizedVanNumber,
+            lastInspectionDate: nil
+        )
         vehicles.insert(vehicle, at: 0)
         return vehicle
     }

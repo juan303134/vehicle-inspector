@@ -153,8 +153,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const vehicle = normalizeVehicleInput(body);
       const result = await db.query(
-        `INSERT INTO vehicles (id, vin, plate, make, model, year, color, label)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO vehicles (id, vin, plate, make, model, year, color, label, van_number)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (id) DO UPDATE SET
           vin = EXCLUDED.vin,
           plate = EXCLUDED.plate,
@@ -163,9 +163,10 @@ const server = http.createServer(async (req, res) => {
           year = EXCLUDED.year,
           color = EXCLUDED.color,
           label = EXCLUDED.label,
+          van_number = EXCLUDED.van_number,
           updated_at = NOW()
          RETURNING *`,
-        [vehicle.id, vehicle.vin, vehicle.plate, vehicle.make, vehicle.model, vehicle.year, vehicle.color, vehicle.label]
+        [vehicle.id, vehicle.vin, vehicle.plate, vehicle.make, vehicle.model, vehicle.year, vehicle.color, vehicle.label, vehicle.vanNumber]
       );
       sendJson(res, 201, { vehicle: result.rows[0] });
     } catch (error) {
@@ -378,11 +379,14 @@ async function initializeDatabase() {
       model TEXT,
       year INTEGER,
       color TEXT,
+      van_number TEXT,
       label TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await db.query("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS van_number TEXT");
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS inspections (
@@ -453,12 +457,13 @@ function normalizeVehicleInput(body) {
   const make = cleanOptionalString(body.make);
   const model = cleanOptionalString(body.model);
   const plate = cleanOptionalString(body.plate);
+  const vanNumber = cleanOptionalString(body.vanNumber) || cleanOptionalString(body.van_number);
   const vin = cleanOptionalString(body.vin);
   const year = Number.isInteger(Number(body.year)) ? Number(body.year) : null;
   const color = cleanOptionalString(body.color);
-  const label = cleanOptionalString(body.label) || [year, make, model, plate].filter(Boolean).join(" ") || "Untitled vehicle";
+  const label = cleanOptionalString(body.label) || [vanNumber ? `Van ${vanNumber}` : null, year, make, model, plate].filter(Boolean).join(" ") || "Untitled vehicle";
 
-  return { id, vin, plate, make, model, year, color, label };
+  return { id, vin, plate, make, model, year, color, label, vanNumber };
 }
 
 function cleanOptionalString(value) {

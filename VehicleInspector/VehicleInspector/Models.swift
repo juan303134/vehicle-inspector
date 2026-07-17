@@ -90,7 +90,26 @@ struct Vehicle: Identifiable, Hashable {
     var plate: String
     var makeModel: String
     var color: String
+    var vanNumber: String = ""
     var lastInspectionDate: Date?
+
+    var displayName: String {
+        if !vanNumber.isEmpty {
+            return "Van \(vanNumber)"
+        }
+
+        if !plate.isEmpty && plate != "No plate" {
+            return plate
+        }
+
+        return makeModel.isEmpty ? "Untitled vehicle" : makeModel
+    }
+
+    var detailText: String {
+        [plate.isEmpty || plate == "No plate" ? nil : plate, makeModel.isEmpty ? nil : makeModel]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
 }
 
 struct InspectionPhoto: Identifiable, Hashable {

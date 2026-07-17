@@ -118,7 +118,7 @@ struct InspectionDashboardView: View {
                 Picker("Vehicle", selection: $selectedVehicleID) {
                     Text("All vehicles").tag(UUID?.none)
                     ForEach(store.vehicles) { vehicle in
-                        Text(vehicle.plate).tag(Optional(vehicle.id))
+                        Text(vehicle.displayName).tag(Optional(vehicle.id))
                     }
                 }
                 .pickerStyle(.menu)
@@ -277,7 +277,7 @@ struct DashboardFindingRow: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(item.vehicle.plate) · \(item.finding.type.rawValue)")
+                        Text("\(item.vehicle.displayName) · \(item.finding.type.rawValue)")
                             .font(.headline)
                             .foregroundStyle(AppTheme.ink)
                         Text(item.finding.location)
@@ -314,7 +314,7 @@ struct DashboardInspectionRow: View {
         SurfaceCard {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(vehicle.plate)
+                    Text(vehicle.displayName)
                         .font(.headline)
                         .foregroundStyle(AppTheme.ink)
                     Text("\(inspection.date.shortInspectionDate) · \(inspection.photos.count) photos")

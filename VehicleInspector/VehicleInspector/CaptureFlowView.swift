@@ -113,7 +113,7 @@ struct CaptureFlowView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(vehicle.plate)
+                        Text(vehicle.displayName)
                             .font(.headline)
                             .foregroundStyle(AppTheme.ink)
                         Text(progressText)
