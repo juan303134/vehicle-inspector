@@ -45,6 +45,7 @@ struct CaptureFlowView: View {
     @State private var inspectorNotes = ""
     @State private var odometerText = ""
     @State private var odometerImageData: Data?
+    @State private var cloudSaveMessage: String?
 
     init(vehicle: Vehicle, mode: CaptureMode = .guided) {
         self.vehicle = vehicle
@@ -63,6 +64,9 @@ struct CaptureFlowView: View {
                         cameraCapture
                         if let analysisMessage {
                             analysisNotice(analysisMessage)
+                        }
+                        if let cloudSaveMessage {
+                            cloudSaveNotice(cloudSaveMessage)
                         }
                         if mode == .guided {
                             odometerSection
@@ -570,6 +574,20 @@ struct CaptureFlowView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    private func cloudSaveNotice(_ text: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "icloud")
+                .foregroundStyle(AppTheme.accent)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(AppTheme.muted)
+            Spacer()
+        }
+        .padding(12)
+        .background(AppTheme.accent.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     private var cameraPlaceholderText: String {
         if !camera.isCameraAvailable {
             return "Camera unavailable on this device. You can upload a photo."
@@ -616,12 +634,13 @@ struct CaptureFlowView: View {
 
         isAnalyzing = true
         analysisMessage = nil
+        cloudSaveMessage = nil
 
         Task {
             do {
                 let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos)
-                await MainActor.run {
-                    createdInspection = store.createInspection(
+                let inspection = await MainActor.run {
+                    store.createInspection(
                         for: vehicle,
                         photos: photos,
                         findings: findings,
@@ -632,8 +651,24 @@ struct CaptureFlowView: View {
                         odometerText: odometerText,
                         odometerImageData: odometerImageData
                     )
+                }
+
+                await MainActor.run {
+                    createdInspection = inspection
+                    cloudSaveMessage = "Saving inspection to cloud..."
                     isAnalyzing = false
                     showingResults = true
+                }
+
+                do {
+                    try await VehicleDamageAnalysisService.shared.saveInspection(vehicle: vehicle, inspection: inspection)
+                    await MainActor.run {
+                        cloudSaveMessage = "Inspection saved to cloud."
+                    }
+                } catch {
+                    await MainActor.run {
+                        cloudSaveMessage = "Inspection is saved on this iPhone, but cloud sync failed."
+                    }
                 }
             } catch {
                 await MainActor.run {

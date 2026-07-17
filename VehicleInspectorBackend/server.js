@@ -148,8 +148,17 @@ const server = http.createServer(async (req, res) => {
       const result = await db.query(
         `INSERT INTO vehicles (id, vin, plate, make, model, year, color, label)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+          vin = EXCLUDED.vin,
+          plate = EXCLUDED.plate,
+          make = EXCLUDED.make,
+          model = EXCLUDED.model,
+          year = EXCLUDED.year,
+          color = EXCLUDED.color,
+          label = EXCLUDED.label,
+          updated_at = NOW()
          RETURNING *`,
-        [randomUUID(), vehicle.vin, vehicle.plate, vehicle.make, vehicle.model, vehicle.year, vehicle.color, vehicle.label]
+        [vehicle.id, vehicle.vin, vehicle.plate, vehicle.make, vehicle.model, vehicle.year, vehicle.color, vehicle.label]
       );
       sendJson(res, 201, { vehicle: result.rows[0] });
     } catch (error) {
@@ -375,6 +384,7 @@ async function initializeDatabase() {
 }
 
 function normalizeVehicleInput(body) {
+  const id = cleanOptionalString(body.id) || randomUUID();
   const make = cleanOptionalString(body.make);
   const model = cleanOptionalString(body.model);
   const plate = cleanOptionalString(body.plate);
@@ -383,7 +393,7 @@ function normalizeVehicleInput(body) {
   const color = cleanOptionalString(body.color);
   const label = cleanOptionalString(body.label) || [year, make, model, plate].filter(Boolean).join(" ") || "Untitled vehicle";
 
-  return { vin, plate, make, model, year, color, label };
+  return { id, vin, plate, make, model, year, color, label };
 }
 
 function cleanOptionalString(value) {
