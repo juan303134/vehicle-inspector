@@ -661,8 +661,12 @@ struct CaptureFlowView: View {
                 }
 
                 do {
-                    try await VehicleDamageAnalysisService.shared.saveInspection(vehicle: vehicle, inspection: inspection)
+                    let cloudInspection = try await VehicleDamageAnalysisService.shared.saveInspection(vehicle: vehicle, inspection: inspection)
                     await MainActor.run {
+                        if let cloudInspection {
+                            store.upsertInspection(cloudInspection)
+                            createdInspection = cloudInspection
+                        }
                         cloudSaveMessage = "Inspection saved to cloud."
                     }
                 } catch {

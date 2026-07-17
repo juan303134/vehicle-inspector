@@ -149,7 +149,7 @@ struct VehicleDamageAnalysisService {
         return cloudResponse.inspection.inspection
     }
 
-    func saveInspection(vehicle: Vehicle, inspection: Inspection) async throws {
+    func saveInspection(vehicle: Vehicle, inspection: Inspection) async throws -> Inspection? {
         try await saveVehicle(vehicle)
 
         let endpoint = vehiclesEndpoint
@@ -209,12 +209,14 @@ struct VehicleDamageAnalysisService {
         request.timeoutInterval = 360
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode) else {
             throw AnalysisError.backendUnavailable
         }
+
+        return try? cloudDecoder.decode(CloudInspectionDetailResponse.self, from: data).inspection.inspection
     }
 
     func saveVehicle(_ vehicle: Vehicle) async throws {

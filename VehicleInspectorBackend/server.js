@@ -524,12 +524,7 @@ async function createInspection(vehicleId, body) {
     await client.query("UPDATE vehicles SET updated_at = NOW() WHERE id = $1", [vehicleId]);
     await client.query("COMMIT");
 
-    return {
-      ...inspectionResult.rows[0],
-      photos,
-      findings,
-      checklist,
-    };
+    return await getInspection(inspectionResult.rows[0].id);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
