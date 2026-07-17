@@ -12,6 +12,9 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 8787);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 const DEFAULT_OPENAI_MODELS = [
   "gpt-4.1-mini",
   "gpt-4.1",
@@ -35,6 +38,7 @@ const modelState = {
 const ALLOWED_ANGLES = ["Front", "Driver side", "Passenger side", "Rear", "Free photo"];
 const DAMAGE_TYPES = ["Scratch", "Dent", "Paint chip", "Scuff", "Glass/Light"];
 const SEVERITIES = ["Low", "Medium", "High"];
+const CLOUDINARY_CONFIGURED = Boolean(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
 const db = createDatabaseClient();
 let dbInitPromise = null;
 
@@ -95,6 +99,9 @@ const server = http.createServer(async (req, res) => {
       database: {
         configured: Boolean(DATABASE_URL),
         driverLoaded: Boolean(Pool),
+      },
+      cloudinary: {
+        configured: CLOUDINARY_CONFIGURED,
       },
     });
     return;
@@ -349,10 +356,16 @@ async function initializeDatabase() {
       id TEXT PRIMARY KEY,
       inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
       angle TEXT NOT NULL,
-      image_base64 TEXT NOT NULL,
+      image_base64 TEXT,
+      image_url TEXT,
+      cloudinary_public_id TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await db.query("ALTER TABLE inspection_photos ADD COLUMN IF NOT EXISTS image_url TEXT");
+  await db.query("ALTER TABLE inspection_photos ADD COLUMN IF NOT EXISTS cloudinary_public_id TEXT");
+  await db.query("ALTER TABLE inspection_photos ALTER COLUMN image_base64 DROP NOT NULL");
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS damage_findings (
@@ -440,10 +453,24 @@ async function createInspection(vehicleId, body) {
         continue;
       }
 
+      const upload = await uploadInspectionPhotoToCloudinary({
+        inspectionId,
+        photoId: String(photo.id),
+        angle: photo.angle,
+        imageBase64: String(photo.imageBase64),
+      });
+
       await client.query(
-        `INSERT INTO inspection_photos (id, inspection_id, angle, image_base64)
-         VALUES ($1, $2, $3, $4)`,
-        [String(photo.id), inspectionId, photo.angle, String(photo.imageBase64)]
+        `INSERT INTO inspection_photos (id, inspection_id, angle, image_base64, image_url, cloudinary_public_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          String(photo.id),
+          inspectionId,
+          photo.angle,
+          upload.imageUrl ? null : String(photo.imageBase64),
+          upload.imageUrl,
+          upload.publicId,
+        ]
       );
     }
 
@@ -528,6 +555,44 @@ function clampConfidence(value) {
   }
 
   return Math.max(0, Math.min(1, number));
+}
+
+async function uploadInspectionPhotoToCloudinary({ inspectionId, photoId, angle, imageBase64 }) {
+  if (!CLOUDINARY_CONFIGURED) {
+    return { imageUrl: null, publicId: null };
+  }
+
+  const folder = "vehicle-inspector/inspections";
+  const safeAngle = angle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const publicId = `${folder}/${inspectionId}/${safeAngle}-${photoId}`;
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/image/upload`;
+  const form = new FormData();
+  form.append("file", `data:image/jpeg;base64,${imageBase64}`);
+  form.append("public_id", publicId);
+  form.append("overwrite", "true");
+  form.append("resource_type", "image");
+  form.append("tags", "vehicle-inspector,inspection");
+
+  const credentials = Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString("base64");
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${credentials}`,
+    },
+    body: form,
+  });
+
+  const json = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    console.warn(`Cloudinary upload failed for photo ${photoId}: ${json.error?.message || response.status}`);
+    return { imageUrl: null, publicId: null };
+  }
+
+  return {
+    imageUrl: json.secure_url || json.url || null,
+    publicId: json.public_id || publicId,
+  };
 }
 
 async function analyzeVehiclePhotos(photos) {

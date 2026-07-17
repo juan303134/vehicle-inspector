@@ -79,12 +79,15 @@ Start Command: npm start
 ```text
 OPENAI_API_KEY=your_openai_api_key
 DATABASE_URL=your_render_internal_database_url
+CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 OPENAI_MODELS=gpt-4.1-mini,gpt-4.1,gpt-5.4-mini,gpt-5.4-mini-2026-03-17,gpt-5-mini
 VERIFY_ANALYSIS=true
 MIN_CONFIDENCE=0.45
 ```
 
-Do not commit `OPENAI_API_KEY` into the repo.
+Do not commit `OPENAI_API_KEY`, `DATABASE_URL`, or Cloudinary secrets into the repo.
 
 ### Option B: Blueprint
 
@@ -109,6 +112,8 @@ Then update the iPhone app backend URL in `VehicleDamageAnalysisService.swift`.
 ## Database API
 
 When `DATABASE_URL` is configured, the backend creates the required tables automatically on first database request.
+
+When Cloudinary is configured, inspection photos are uploaded to Cloudinary and PostgreSQL stores `image_url` plus `cloudinary_public_id`. If Cloudinary is not configured, the prototype falls back to storing `image_base64` in PostgreSQL.
 
 Create a vehicle:
 
