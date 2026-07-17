@@ -16,11 +16,13 @@ const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
 const DEFAULT_OPENAI_MODELS = [
-  "gpt-5.4-mini",
-  "gpt-5.4-mini-2026-03-17",
-  "gpt-4.1-mini",
+  "gpt-5.6-sol",
+  "gpt-5.6",
+  "gpt-5.5-pro",
+  "gpt-5.4-pro",
+  "gpt-5.4",
   "gpt-4.1",
-  "gpt-5-mini",
+  "gpt-5.4-mini",
 ];
 const OPENAI_MODELS = (process.env.OPENAI_MODELS || process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODELS.join(","))
   .split(",")
@@ -36,8 +38,9 @@ const modelState = {
 };
 
 const ALLOWED_ANGLES = ["Front", "Driver side", "Passenger side", "Rear", "Free photo"];
-const DAMAGE_TYPES = ["Scratch", "Dent", "Paint chip", "Scuff", "Glass/Light"];
+const DAMAGE_TYPES = ["Scratch", "Dent", "Paint chip", "Paint transfer", "Scuff", "Crack", "Bumper damage", "Glass/Light"];
 const SEVERITIES = ["Low", "Medium", "High"];
+const ANALYSIS_MODES = ["fast", "accurate"];
 const CLOUDINARY_CONFIGURED = Boolean(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
 const db = createDatabaseClient();
 let dbInitPromise = null;
@@ -52,15 +55,19 @@ const responseSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["photoID", "angle", "type", "severity", "location", "confidence", "isNew", "region"],
+        required: ["photoID", "angle", "type", "severity", "location", "panel", "confidence", "isNew", "region", "evidence", "falsePositiveRisk", "needsHumanReview"],
         properties: {
           photoID: { type: "string" },
           angle: { type: "string", enum: ALLOWED_ANGLES },
           type: { type: "string", enum: DAMAGE_TYPES },
           severity: { type: "string", enum: SEVERITIES },
           location: { type: "string" },
+          panel: { type: "string" },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           isNew: { type: "boolean" },
+          evidence: { type: "string" },
+          falsePositiveRisk: { type: "string", enum: ["Low", "Medium", "High"] },
+          needsHumanReview: { type: "boolean" },
           region: {
             type: "object",
             additionalProperties: false,
@@ -287,6 +294,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const findingMatch = pathname.match(/^\/findings\/([^/]+)$/);
+  if (req.method === "PATCH" && findingMatch) {
+    try {
+      await ensureDatabase();
+      const body = await readJson(req);
+      const finding = await updateFindingRecord(findingMatch[1], body);
+      if (!finding) {
+        sendJson(res, 404, { error: "Finding not found" });
+        return;
+      }
+      sendJson(res, 200, { finding });
+    } catch (error) {
+      handleRouteError(res, error, "Could not update finding");
+    }
+    return;
+  }
+
   if (req.method === "DELETE" && pathname === "/data") {
     try {
       await ensureDatabase();
@@ -314,6 +338,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const photos = Array.isArray(body.photos) ? body.photos : [];
       const validPhotos = photos.filter((photo) => photo.id && ALLOWED_ANGLES.includes(photo.angle) && photo.imageBase64);
+      const analysisMode = ANALYSIS_MODES.includes(body.mode) ? body.mode : "accurate";
       console.log(`Received ${validPhotos.length} valid photo(s) for analysis`);
 
       if (validPhotos.length === 0) {
@@ -321,7 +346,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const findings = await analyzeVehiclePhotos(validPhotos);
+      const findings = await analyzeVehiclePhotos(validPhotos, analysisMode);
       console.log(`OpenAI returned ${findings.findings?.length || 0} finding(s)`);
       sendJson(res, 200, findings);
     } catch (error) {
@@ -427,10 +452,15 @@ async function initializeDatabase() {
       type TEXT NOT NULL,
       severity TEXT NOT NULL,
       location TEXT NOT NULL,
+      panel TEXT,
+      evidence TEXT,
+      false_positive_risk TEXT,
+      needs_human_review BOOLEAN NOT NULL DEFAULT FALSE,
       confidence NUMERIC,
       is_new BOOLEAN NOT NULL DEFAULT FALSE,
       comparison_status TEXT NOT NULL DEFAULT 'New damage',
       comparison_reason TEXT,
+      review_status TEXT NOT NULL DEFAULT 'Pending',
       region JSONB NOT NULL DEFAULT '{}'::jsonb,
       note TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -439,6 +469,11 @@ async function initializeDatabase() {
 
   await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS comparison_status TEXT NOT NULL DEFAULT 'New damage'");
   await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS comparison_reason TEXT");
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'Pending'");
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS panel TEXT");
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS evidence TEXT");
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS false_positive_risk TEXT");
+  await db.query("ALTER TABLE damage_findings ADD COLUMN IF NOT EXISTS needs_human_review BOOLEAN NOT NULL DEFAULT FALSE");
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS checklist_items (
@@ -538,20 +573,25 @@ async function createInspection(vehicleId, body) {
 
       await client.query(
         `INSERT INTO damage_findings
-          (id, inspection_id, photo_id, angle, type, severity, location, confidence, is_new, comparison_status, comparison_reason, region, note)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          (id, inspection_id, photo_id, angle, type, severity, location, panel, evidence, false_positive_risk, needs_human_review, confidence, is_new, comparison_status, comparison_reason, review_status, region, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
         [
-          randomUUID(),
+          normalizedFinding.id || randomUUID(),
           inspectionId,
           normalizedFinding.photoID,
           normalizedFinding.angle,
           normalizedFinding.type,
           normalizedFinding.severity,
           normalizedFinding.location,
+          normalizedFinding.panel,
+          normalizedFinding.evidence,
+          normalizedFinding.falsePositiveRisk,
+          normalizedFinding.needsHumanReview,
           normalizedFinding.confidence,
           comparison.status !== "Existing damage",
           comparison.status,
           comparison.reason,
+          normalizedFinding.reviewStatus,
           JSON.stringify(normalizedFinding.region),
           normalizedFinding.note,
         ]
@@ -728,15 +768,40 @@ async function getPreviousInspectionFindings(client, vehicleId) {
 
 function normalizeFindingInput(finding) {
   return {
+    id: cleanOptionalString(finding.id),
     photoID: cleanOptionalString(finding.photoID),
     angle: ALLOWED_ANGLES.includes(finding.angle) ? finding.angle : cleanOptionalString(finding.angle),
     type: DAMAGE_TYPES.includes(finding.type) ? finding.type : "Scratch",
     severity: SEVERITIES.includes(finding.severity) ? finding.severity : "Low",
     location: cleanOptionalString(finding.location) || "Vehicle damage",
+    panel: cleanOptionalString(finding.panel) || cleanOptionalString(finding.location) || "Vehicle panel",
+    evidence: cleanOptionalString(finding.evidence) || "Visible mark on vehicle surface.",
+    falsePositiveRisk: ["Low", "Medium", "High"].includes(finding.falsePositiveRisk) ? finding.falsePositiveRisk : "Medium",
+    needsHumanReview: Boolean(finding.needsHumanReview),
+    reviewStatus: ["Pending", "Confirmed", "Dismissed"].includes(finding.reviewStatus) ? finding.reviewStatus : "Pending",
     confidence: clampConfidence(finding.confidence),
     region: normalizeRegion(finding.region),
     note: cleanOptionalString(finding.note),
   };
+}
+
+async function updateFindingRecord(findingId, body) {
+  const reviewStatus = ["Pending", "Confirmed", "Dismissed"].includes(body.reviewStatus) ? body.reviewStatus : null;
+  const severity = SEVERITIES.includes(body.severity) ? body.severity : null;
+  const note = typeof body.note === "string" ? body.note : null;
+
+  const result = await db.query(
+    `UPDATE damage_findings
+     SET
+      review_status = COALESCE($2, review_status),
+      severity = COALESCE($3, severity),
+      note = COALESCE($4, note)
+     WHERE id = $1
+     RETURNING *`,
+    [findingId, reviewStatus, severity, note]
+  );
+
+  return result.rows[0] || null;
 }
 
 function classifyFindingAgainstPrevious(finding, previousFindings) {
@@ -986,14 +1051,14 @@ async function deleteCloudinaryPhoto(publicId) {
   return json.result === "ok" || json.result === "not found";
 }
 
-async function analyzeVehiclePhotos(photos) {
-  console.log(`Sending ${photos.length} photo(s) to OpenAI model candidates: ${OPENAI_MODELS.join(", ")}`);
+async function analyzeVehiclePhotos(photos, mode = "accurate") {
+  console.log(`Sending ${photos.length} photo(s) to OpenAI model candidates: ${OPENAI_MODELS.join(", ")} in ${mode} mode`);
   const findings = [];
   const failedPhotos = [];
 
   for (const photo of photos) {
     try {
-      const result = await analyzeSingleVehiclePhoto(photo);
+      const result = await analyzeSingleVehiclePhoto(photo, mode);
       findings.push(...(result.findings || []));
     } catch (error) {
       failedPhotos.push({ photoID: photo.id, angle: photo.angle, error: error.message });
@@ -1005,11 +1070,12 @@ async function analyzeVehiclePhotos(photos) {
     console.warn(`Analysis completed with ${failedPhotos.length} failed photo(s).`);
   }
 
-  return { findings };
+  return { findings, mode };
 }
 
-async function analyzeSingleVehiclePhoto(photo) {
+async function analyzeSingleVehiclePhoto(photo, mode = "accurate") {
   console.log(`Analyzing photo ${photo.id} (${photo.angle})`);
+  const isAccurate = mode === "accurate";
   const content = [
     {
       type: "input_text",
@@ -1021,6 +1087,14 @@ async function analyzeSingleVehiclePhoto(photo) {
         "Ignore sky, clouds, trees, buildings, road, shadows, glare, reflections, dirt, water spots, camera artifacts, and objects that are not physically on the vehicle.",
         "Do not report damage unless the damaged area is clearly on the vehicle body, bumper, trim, wheel, glass, or light.",
         "Detect visible vehicle damage: scratches, dents, paint chips, cracked glass, broken lights, scuffs, and bumper damage.",
+        "Classify damage type carefully:",
+        "- Dent: physical concave/convex deformation, bent panel/bumper, warped body lines, or distorted reflections caused by shape change.",
+        "- Scratch: thin linear clear-coat/paint disruption, usually narrow and line-like.",
+        "- Scuff: broader rubbed abrasion, often cloudy, dull, or transferred from contact.",
+        "- Paint transfer: foreign paint/color sitting on top of the vehicle surface.",
+        "- Paint chip: missing paint exposing primer/underlayer, usually small and sharp-edged.",
+        "- Crack: split or fracture in glass, light, bumper, or plastic.",
+        "- Bumper damage: bumper-specific deformation, puncture, scrape cluster, torn plastic, or impact area.",
         "For dents and collision damage, look for localized panel deformation, bent metal/plastic, crushed bumper areas, warped straight reflection lines on the vehicle surface, uneven body lines, highlight distortion, concave/convex shape changes, and panel gaps that change around the damaged area.",
         "For scratches and scuffs, look for thin bright or dark lines, paint transfer, abrasion marks, scraped clear coat, or clusters of parallel marks on the vehicle surface.",
         "For paint chips, look for small areas where paint is missing and a different underlayer color is visible.",
@@ -1030,12 +1104,19 @@ async function analyzeSingleVehiclePhoto(photo) {
         "If the photo shows a vehicle but no clear damage, return an empty findings array.",
         "If there is obvious damage, include it even if it is small.",
         "Keep each location short, specific, and tied to a vehicle part.",
+        "Set panel to a concise panel/part name such as Front bumper, Hood, Driver door, Rear quarter panel, Wheel, Windshield, Headlight, Taillight.",
+        "Set evidence to one short sentence describing the visible cue that supports the damage type.",
+        "Set falsePositiveRisk to High when glare/reflection/dirt/shadow could explain the mark, Medium when uncertain, Low when clearly physical damage.",
+        "Set needsHumanReview=true for low confidence, high false-positive risk, or ambiguous dents versus reflections.",
         "Use normalized image coordinates: x, y, width, height between 0 and 1.",
         "The region must tightly enclose the actual vehicle damage, not the entire vehicle or any background object.",
         "Because no previous inspection is provided yet, set isNew=true only if the damage looks recent or isolated; otherwise use false.",
         `The angle property must be exactly "${photo.angle}".`,
         `The photoID property must be exactly "${photo.id}".`,
         "If the angle is Free photo, analyze any visible vehicle area without requiring a specific view.",
+        isAccurate
+          ? "Accurate mode: prefer fewer, better findings. Be detailed and precise. Include only evidence-backed damage."
+          : "Fast mode: return the most obvious findings only. Keep confidence conservative.",
       ].join("\n"),
     },
     {
@@ -1051,7 +1132,7 @@ async function analyzeSingleVehiclePhoto(photo) {
   for (const model of modelCandidates) {
     try {
       const result = await analyzeWithModel(model, content);
-      const verifiedResult = await verifyVehiclePhotoFindings(photo, result, model);
+      const verifiedResult = await verifyVehiclePhotoFindings(photo, result, model, mode);
       modelState.workingModel = model;
       modelState.successfulModels.add(model);
       console.log(`Model ${model} completed analysis for photo ${photo.id}: ${result.findings?.length || 0} initial, ${verifiedResult.findings?.length || 0} confirmed.`);
@@ -1074,10 +1155,11 @@ async function analyzeSingleVehiclePhoto(photo) {
   throw lastError || new Error("No OpenAI model candidates configured");
 }
 
-async function verifyVehiclePhotoFindings(photo, result, preferredModel) {
-  const initialFindings = (result.findings || []).filter((finding) => finding.confidence >= MIN_CONFIDENCE);
+async function verifyVehiclePhotoFindings(photo, result, preferredModel, mode = "accurate") {
+  const threshold = mode === "accurate" ? MIN_CONFIDENCE : Math.max(MIN_CONFIDENCE, 0.58);
+  const initialFindings = (result.findings || []).filter((finding) => finding.confidence >= threshold);
 
-  if (!VERIFY_ANALYSIS || initialFindings.length === 0) {
+  if (!VERIFY_ANALYSIS || mode === "fast" || initialFindings.length === 0) {
     return { findings: initialFindings };
   }
 
@@ -1093,6 +1175,10 @@ async function verifyVehiclePhotoFindings(photo, result, preferredModel) {
         "Discard anything that is likely reflection, shadow, glare, road/background, dirt, water spot, camera artifact, normal panel gap, body seam, handle, badge, trim line, or lighting gradient.",
         "For dents, require visible deformation such as warped body lines, bent panel/bumper shape, or distorted reflections tied to the vehicle surface.",
         "For scratches/scuffs, require visible abrasion, paint transfer, clear coat disruption, or a consistent mark on the vehicle surface.",
+        "Use the candidate region as a mental crop. Re-check each candidate region closely instead of reviewing the whole vehicle generally.",
+        "Refine panel, evidence, falsePositiveRisk, needsHumanReview, type, severity, confidence, and region.",
+        "If a dent is only a normal reflection curve and no panel deformation is visible, discard it.",
+        "If a scratch is actually a seam, trim edge, reflection, dirt, or shadow, discard it.",
         "Keep true obvious damage even if it is small.",
         "You may tighten the region and lower or raise confidence.",
         "Do not invent new findings in this verification pass; only keep or refine candidates from the list.",
@@ -1313,6 +1399,6 @@ function handleRouteError(res, error, fallbackMessage) {
 
 function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }

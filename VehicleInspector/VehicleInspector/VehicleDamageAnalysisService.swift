@@ -32,8 +32,9 @@ struct VehicleDamageAnalysisService {
         return try JSONDecoder().decode(BackendHealth.self, from: data)
     }
 
-    func analyze(photos: [InspectionPhoto]) async throws -> [DamageFinding] {
+    func analyze(photos: [InspectionPhoto], mode: AnalysisMode = .accurate) async throws -> [DamageFinding] {
         let payload = AnalysisRequest(
+            mode: mode.apiValue,
             photos: photos.compactMap { photo in
                 guard let imageData = photo.imageData else { return nil }
                 return AnalysisPhoto(id: photo.id.uuidString, angle: photo.angle.rawValue, imageBase64: imageData.base64EncodedString())
@@ -71,6 +72,7 @@ struct VehicleDamageAnalysisService {
                 type: type,
                 severity: severity,
                 location: finding.location,
+                panel: finding.panel,
                 confidence: finding.confidence,
                 isNew: finding.isNew,
                 region: DamageRegion(
@@ -79,8 +81,36 @@ struct VehicleDamageAnalysisService {
                     width: finding.region.width,
                     height: finding.region.height
                 ),
+                evidence: finding.evidence,
+                falsePositiveRisk: DamageSeverity(rawValue: finding.falsePositiveRisk) ?? .medium,
+                needsHumanReview: finding.needsHumanReview,
                 comparisonStatus: finding.isNew ? .new : .existing
             )
+        }
+    }
+
+    func updateFinding(_ finding: DamageFinding) async throws {
+        let endpoint = baseURL
+            .appendingPathComponent("findings")
+            .appendingPathComponent(finding.id.uuidString.lowercased())
+
+        let payload = CloudFindingReviewUpdate(
+            reviewStatus: finding.reviewStatus.rawValue,
+            severity: finding.severity.rawValue,
+            note: finding.note
+        )
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            throw AnalysisError.backendUnavailable
         }
     }
 
@@ -214,10 +244,15 @@ struct VehicleDamageAnalysisService {
                     type: finding.type.rawValue,
                     severity: finding.severity.rawValue,
                     location: finding.location,
+                    panel: finding.panel,
                     confidence: finding.confidence,
                     isNew: finding.isNew,
+                    evidence: finding.evidence,
+                    falsePositiveRisk: finding.falsePositiveRisk.rawValue,
+                    needsHumanReview: finding.needsHumanReview,
                     comparisonStatus: finding.comparisonStatus.rawValue,
                     comparisonReason: finding.comparisonReason,
+                    reviewStatus: finding.reviewStatus.rawValue,
                     region: CloudDamageRegion(
                         x: finding.region.x,
                         y: finding.region.y,
@@ -325,6 +360,7 @@ struct BackendHealth: Decodable {
 }
 
 private struct AnalysisRequest: Encodable {
+    let mode: String
     let photos: [AnalysisPhoto]
 }
 
@@ -344,9 +380,19 @@ private struct AnalysisFinding: Decodable {
     let type: String
     let severity: String
     let location: String
+    let panel: String
     let confidence: Double
     let isNew: Bool
+    let evidence: String
+    let falsePositiveRisk: String
+    let needsHumanReview: Bool
     let region: AnalysisRegion
+}
+
+private struct CloudFindingReviewUpdate: Encodable {
+    let reviewStatus: String
+    let severity: String
+    let note: String
 }
 
 private struct AnalysisRegion: Decodable {
@@ -518,10 +564,15 @@ private struct CloudSavedFinding: Decodable {
     let type: String
     let severity: String
     let location: String
+    let panel: String?
     let confidence: FlexibleDouble
     let isNew: Bool
+    let evidence: String?
+    let falsePositiveRisk: String?
+    let needsHumanReview: Bool?
     let comparisonStatus: String?
     let comparisonReason: String?
+    let reviewStatus: String?
     let region: CloudDamageRegion
     let note: String?
 
@@ -532,10 +583,15 @@ private struct CloudSavedFinding: Decodable {
         case type
         case severity
         case location
+        case panel
         case confidence
         case isNew = "is_new"
+        case evidence
+        case falsePositiveRisk = "false_positive_risk"
+        case needsHumanReview = "needs_human_review"
         case comparisonStatus = "comparison_status"
         case comparisonReason = "comparison_reason"
+        case reviewStatus = "review_status"
         case region
         case note
     }
@@ -555,11 +611,16 @@ private struct CloudSavedFinding: Decodable {
             type: damageType,
             severity: damageSeverity,
             location: location,
+            panel: panel ?? location,
             confidence: confidence.value,
             isNew: isNew,
             region: DamageRegion(x: region.x, y: region.y, width: region.width, height: region.height),
+            evidence: evidence ?? "",
+            falsePositiveRisk: DamageSeverity(rawValue: falsePositiveRisk ?? "") ?? .medium,
+            needsHumanReview: needsHumanReview ?? false,
             comparisonStatus: DamageComparisonStatus(rawValue: comparisonStatus ?? "") ?? (isNew ? .new : .existing),
             comparisonReason: comparisonReason ?? "",
+            reviewStatus: FindingReviewStatus(rawValue: reviewStatus ?? "") ?? .pending,
             note: note ?? ""
         )
     }
@@ -604,10 +665,15 @@ private struct CloudDamageFinding: Encodable {
     let type: String
     let severity: String
     let location: String
+    let panel: String
     let confidence: Double
     let isNew: Bool
+    let evidence: String
+    let falsePositiveRisk: String
+    let needsHumanReview: Bool
     let comparisonStatus: String
     let comparisonReason: String
+    let reviewStatus: String
     let region: CloudDamageRegion
     let note: String
 }

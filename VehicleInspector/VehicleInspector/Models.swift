@@ -43,7 +43,10 @@ enum DamageType: String, CaseIterable {
     case scratch = "Scratch"
     case dent = "Dent"
     case paint = "Paint chip"
+    case paintTransfer = "Paint transfer"
     case scuff = "Scuff"
+    case crack = "Crack"
+    case bumper = "Bumper damage"
     case glass = "Glass/Light"
 }
 
@@ -81,6 +84,27 @@ enum FindingReviewStatus: String, Hashable {
         case .pending: return "clock"
         case .confirmed: return "checkmark"
         case .dismissed: return "xmark"
+        }
+    }
+}
+
+enum AnalysisMode: String, CaseIterable, Identifiable, Hashable {
+    case fast = "Fast"
+    case accurate = "Accurate"
+
+    var id: String { rawValue }
+
+    var apiValue: String {
+        switch self {
+        case .fast: return "fast"
+        case .accurate: return "accurate"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .fast: return "Quicker scan for obvious damage."
+        case .accurate: return "Detailed double-check for better precision."
         }
     }
 }
@@ -157,13 +181,55 @@ struct DamageFinding: Identifiable, Hashable {
     let type: DamageType
     var severity: DamageSeverity
     let location: String
+    let panel: String
     let confidence: Double
     let isNew: Bool
     let region: DamageRegion
+    let evidence: String
+    let falsePositiveRisk: DamageSeverity
+    let needsHumanReview: Bool
     var comparisonStatus: DamageComparisonStatus = .new
     var comparisonReason: String = ""
     var reviewStatus: FindingReviewStatus = .pending
     var note: String = ""
+
+    init(
+        id: UUID,
+        photoID: UUID?,
+        angle: InspectionAngle,
+        type: DamageType,
+        severity: DamageSeverity,
+        location: String,
+        panel: String = "",
+        confidence: Double,
+        isNew: Bool,
+        region: DamageRegion,
+        evidence: String = "",
+        falsePositiveRisk: DamageSeverity = .medium,
+        needsHumanReview: Bool = false,
+        comparisonStatus: DamageComparisonStatus = .new,
+        comparisonReason: String = "",
+        reviewStatus: FindingReviewStatus = .pending,
+        note: String = ""
+    ) {
+        self.id = id
+        self.photoID = photoID
+        self.angle = angle
+        self.type = type
+        self.severity = severity
+        self.location = location
+        self.panel = panel
+        self.confidence = confidence
+        self.isNew = isNew
+        self.region = region
+        self.evidence = evidence
+        self.falsePositiveRisk = falsePositiveRisk
+        self.needsHumanReview = needsHumanReview
+        self.comparisonStatus = comparisonStatus
+        self.comparisonReason = comparisonReason
+        self.reviewStatus = reviewStatus
+        self.note = note
+    }
 }
 
 struct DamageRegion: Hashable {

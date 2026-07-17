@@ -38,58 +38,64 @@ struct ResultsView: View {
         ZStack {
             AppTheme.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    resultHeader
-                    analysisStatusCard
-                    reportSummary
-                    comparisonSummary
-                    odometerSummary
-                    checklistSummary
-                    inspectionNotes
-                    visualReview
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        resultHeader
+                        analysisStatusCard
+                        reportSummary
+                        comparisonSummary
+                        odometerSummary
+                        checklistSummary
+                        inspectionNotes
+                        visualReview
 
-                    FindingSection(
-                        title: "New damage",
-                        emptyText: "No new damage detected.",
-                        findings: newFindings,
-                        onConfirm: confirmFinding,
-                        onDismiss: dismissFinding,
-                        onSeverityChange: updateFindingSeverity,
-                        onNoteChange: updateFindingNote
-                    )
-                    FindingSection(
-                        title: "Changed / needs review",
-                        emptyText: "No changed damage detected.",
-                        findings: changedFindings,
-                        onConfirm: confirmFinding,
-                        onDismiss: dismissFinding,
-                        onSeverityChange: updateFindingSeverity,
-                        onNoteChange: updateFindingNote
-                    )
-                    FindingSection(
-                        title: "Existing damage",
-                        emptyText: "No existing damage matched.",
-                        findings: existingFindings,
-                        onConfirm: confirmFinding,
-                        onDismiss: dismissFinding,
-                        onSeverityChange: updateFindingSeverity,
-                        onNoteChange: updateFindingNote
-                    )
-
-                    if !dismissedFindings.isEmpty {
                         FindingSection(
-                            title: "Dismissed",
-                            emptyText: "",
-                            findings: dismissedFindings,
+                            title: "New damage",
+                            emptyText: "No new damage detected.",
+                            findings: newFindings,
                             onConfirm: confirmFinding,
                             onDismiss: dismissFinding,
                             onSeverityChange: updateFindingSeverity,
-                            onNoteChange: updateFindingNote
+                            onNoteChange: updateFindingNote,
+                            onLocate: { scrollToFinding($0, proxy: proxy) }
                         )
+                        FindingSection(
+                            title: "Changed / needs review",
+                            emptyText: "No changed damage detected.",
+                            findings: changedFindings,
+                            onConfirm: confirmFinding,
+                            onDismiss: dismissFinding,
+                            onSeverityChange: updateFindingSeverity,
+                            onNoteChange: updateFindingNote,
+                            onLocate: { scrollToFinding($0, proxy: proxy) }
+                        )
+                        FindingSection(
+                            title: "Existing damage",
+                            emptyText: "No existing damage matched.",
+                            findings: existingFindings,
+                            onConfirm: confirmFinding,
+                            onDismiss: dismissFinding,
+                            onSeverityChange: updateFindingSeverity,
+                            onNoteChange: updateFindingNote,
+                            onLocate: { scrollToFinding($0, proxy: proxy) }
+                        )
+
+                        if !dismissedFindings.isEmpty {
+                            FindingSection(
+                                title: "Dismissed",
+                                emptyText: "",
+                                findings: dismissedFindings,
+                                onConfirm: confirmFinding,
+                                onDismiss: dismissFinding,
+                                onSeverityChange: updateFindingSeverity,
+                                onNoteChange: updateFindingNote,
+                                onLocate: { scrollToFinding($0, proxy: proxy) }
+                            )
+                        }
                     }
+                    .padding(18)
                 }
-                .padding(18)
             }
         }
         .navigationTitle("Results")
@@ -304,8 +310,11 @@ struct ResultsView: View {
                             photo: photo,
                             findings: findings(for: photo, in: anglePhotos),
                             isFocusedAnalyzing: isFocusedAnalyzing,
-                            onFocusedAnalyze: analyzeFocusedArea
+                            onFocusedAnalyze: analyzeFocusedArea,
+                            onConfirm: confirmFinding,
+                            onDismiss: dismissFinding
                         )
+                        .id(photoScrollID(photo.id))
                     }
                 }
             }
@@ -332,18 +341,32 @@ struct ResultsView: View {
 
     private func confirmFinding(_ finding: DamageFinding) {
         store.updateFindingStatus(inspectionID: currentInspection.id, findingID: finding.id, status: .confirmed)
+        persistFindingUpdate(finding.id)
     }
 
     private func dismissFinding(_ finding: DamageFinding) {
         store.updateFindingStatus(inspectionID: currentInspection.id, findingID: finding.id, status: .dismissed)
+        persistFindingUpdate(finding.id)
     }
 
     private func updateFindingSeverity(_ finding: DamageFinding, severity: DamageSeverity) {
         store.updateFindingSeverity(inspectionID: currentInspection.id, findingID: finding.id, severity: severity)
+        persistFindingUpdate(finding.id)
     }
 
     private func updateFindingNote(_ finding: DamageFinding, note: String) {
         store.updateFindingNote(inspectionID: currentInspection.id, findingID: finding.id, note: note)
+        persistFindingUpdate(finding.id)
+    }
+
+    private func persistFindingUpdate(_ findingID: UUID) {
+        guard let updatedFinding = currentInspection.findings.first(where: { $0.id == findingID }) else {
+            return
+        }
+
+        Task {
+            try? await VehicleDamageAnalysisService.shared.updateFinding(updatedFinding)
+        }
     }
 
     private func reanalyzeInspection() {
@@ -356,7 +379,7 @@ struct ResultsView: View {
 
         Task {
             do {
-                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos)
+                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos, mode: .accurate)
                 await MainActor.run {
                     store.replaceAnalysis(inspectionID: currentInspection.id, findings: findings, source: .ai)
                     reanalysisMessage = "Reanalysis completed with artificial intelligence."
@@ -387,7 +410,7 @@ struct ResultsView: View {
 
         Task {
             do {
-                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: [focusedPhoto])
+                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: [focusedPhoto], mode: .accurate)
                 let mappedFindings = findings.map { finding in
                     DamageFinding(
                         id: UUID(),
@@ -436,6 +459,28 @@ struct ResultsView: View {
             return photo.id == firstPhotoID
         }
     }
+
+    private func scrollToFinding(_ finding: DamageFinding, proxy: ScrollViewProxy) {
+        guard let id = photoScrollID(for: finding) else { return }
+
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            proxy.scrollTo(id, anchor: .top)
+        }
+    }
+
+    private func photoScrollID(for finding: DamageFinding) -> String? {
+        if let photoID = finding.photoID {
+            return photoScrollID(photoID)
+        }
+
+        return currentInspection.photos
+            .first { $0.angle == finding.angle && $0.captured }
+            .map { photoScrollID($0.id) }
+    }
+
+    private func photoScrollID(_ photoID: UUID) -> String {
+        "photo-\(photoID.uuidString)"
+    }
 }
 
 struct ResultMetric: View {
@@ -481,6 +526,8 @@ struct DamagePhotoCard: View {
     let findings: [DamageFinding]
     let isFocusedAnalyzing: Bool
     let onFocusedAnalyze: (InspectionPhoto, CGRect) -> Void
+    let onConfirm: (DamageFinding) -> Void
+    let onDismiss: (DamageFinding) -> Void
 
     @State private var showingPhotoViewer = false
     @State private var remoteImageData: Data?
@@ -539,28 +586,48 @@ struct DamagePhotoCard: View {
                         .font(.footnote)
                         .foregroundStyle(AppTheme.muted)
                 } else {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         ForEach(Array(findings.enumerated()), id: \.element.id) { index, finding in
-                            HStack(spacing: 8) {
-                                Text("\(index + 1)")
-                                    .font(.caption.bold())
-                                    .frame(width: 22, height: 22)
-                                    .background(finding.comparisonStatus.color)
-                                    .foregroundStyle(.white)
-                                    .clipShape(Circle())
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Text("\(index + 1)")
+                                        .font(.caption.bold())
+                                        .frame(width: 22, height: 22)
+                                        .background(finding.comparisonStatus.color)
+                                        .foregroundStyle(.white)
+                                        .clipShape(Circle())
 
-                                Text("\(finding.comparisonStatus.shortLabel) · \(finding.type.rawValue) · \(finding.location)")
-                                    .font(.footnote)
-                                    .foregroundStyle(AppTheme.muted)
-                                    .lineLimit(2)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(finding.comparisonStatus.shortLabel) · \(finding.type.rawValue)")
+                                            .font(.footnote.weight(.semibold))
+                                            .foregroundStyle(AppTheme.ink)
+                                        Text([finding.panel, finding.location].filter { !$0.isEmpty }.joined(separator: " · "))
+                                            .font(.caption)
+                                            .foregroundStyle(AppTheme.muted)
+                                            .lineLimit(2)
+                                    }
 
-                                Spacer()
+                                    Spacer()
 
-                                if finding.reviewStatus == .confirmed {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
+                                    StatusPill(text: finding.reviewStatus.rawValue, systemImage: finding.reviewStatus.icon, color: finding.reviewStatus.color)
+                                }
+
+                                FindingQuickActions(
+                                    finding: finding,
+                                    onConfirm: onConfirm,
+                                    onDismiss: onDismiss
+                                )
+
+                                if !finding.evidence.isEmpty {
+                                    Text(finding.evidence)
+                                        .font(.caption2)
+                                        .foregroundStyle(AppTheme.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
+                            .padding(10)
+                            .background(AppTheme.line.opacity(0.30))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                     }
                 }
@@ -570,11 +637,13 @@ struct DamagePhotoCard: View {
             if let image = uiImage {
                         DamagePhotoViewer(
                             angle: angle,
-                    photo: photoForAnalysis,
+                            photo: photoForAnalysis,
                             image: image,
                             findings: findings,
                             isFocusedAnalyzing: isFocusedAnalyzing,
-                            onFocusedAnalyze: onFocusedAnalyze
+                            onFocusedAnalyze: onFocusedAnalyze,
+                            onConfirm: onConfirm,
+                            onDismiss: onDismiss
                         )
             }
         }
@@ -621,6 +690,8 @@ struct DamagePhotoViewer: View {
     let findings: [DamageFinding]
     let isFocusedAnalyzing: Bool
     let onFocusedAnalyze: (InspectionPhoto, CGRect) -> Void
+    let onConfirm: (DamageFinding) -> Void
+    let onDismiss: (DamageFinding) -> Void
 
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
@@ -786,22 +857,67 @@ struct DamagePhotoViewer: View {
 
                 if !findings.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
                             ForEach(Array(findings.enumerated()), id: \.element.id) { index, finding in
-                                HStack(spacing: 6) {
-                                    Text("\(index + 1)")
-                                        .font(.caption.bold())
-                                        .frame(width: 22, height: 22)
-                                        .background(finding.isNew ? AppTheme.warning : AppTheme.accent)
-                                        .foregroundStyle(.white)
-                                        .clipShape(Circle())
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 6) {
+                                        Text("\(index + 1)")
+                                            .font(.caption.bold())
+                                            .frame(width: 22, height: 22)
+                                            .background(finding.isNew ? AppTheme.warning : AppTheme.accent)
+                                            .foregroundStyle(.white)
+                                            .clipShape(Circle())
 
-                                    Text(finding.type.rawValue)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.white)
+                                        Text(finding.type.rawValue)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.white)
+
+                                        StatusPill(text: finding.reviewStatus.rawValue, systemImage: finding.reviewStatus.icon, color: finding.reviewStatus.color)
+                                    }
+
+                                    Text(finding.location)
+                                        .font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.70))
+                                        .lineLimit(2)
+                                        .frame(width: 210, alignment: .leading)
+
+                                    if !finding.evidence.isEmpty {
+                                        Text(finding.evidence)
+                                            .font(.caption2)
+                                            .foregroundStyle(.white.opacity(0.70))
+                                            .lineLimit(2)
+                                            .frame(width: 210, alignment: .leading)
+                                    }
+
+                                    HStack(spacing: 8) {
+                                        Button {
+                                            onConfirm(finding)
+                                        } label: {
+                                            Label(finding.reviewStatus == .confirmed ? "Confirmed" : "Confirm", systemImage: "checkmark")
+                                                .font(.caption.weight(.semibold))
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 8)
+                                                .background((finding.reviewStatus == .confirmed ? Color.green : AppTheme.accent).opacity(0.86))
+                                                .foregroundStyle(.white)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        }
+                                        .disabled(finding.reviewStatus == .confirmed)
+
+                                        Button {
+                                            onDismiss(finding)
+                                        } label: {
+                                            Label("Dismiss", systemImage: "xmark")
+                                                .font(.caption.weight(.semibold))
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 8)
+                                                .background(.white.opacity(0.14))
+                                                .foregroundStyle(.white)
+                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        }
+                                    }
                                 }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 8)
+                                .frame(width: 240)
+                                .padding(10)
                                 .background(.white.opacity(0.14))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
@@ -1021,6 +1137,7 @@ struct FindingSection: View {
     let onDismiss: (DamageFinding) -> Void
     let onSeverityChange: (DamageFinding, DamageSeverity) -> Void
     let onNoteChange: (DamageFinding, String) -> Void
+    let onLocate: (DamageFinding) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1042,7 +1159,8 @@ struct FindingSection: View {
                         onConfirm: onConfirm,
                         onDismiss: onDismiss,
                         onSeverityChange: onSeverityChange,
-                        onNoteChange: onNoteChange
+                        onNoteChange: onNoteChange,
+                        onLocate: onLocate
                     )
                 }
             }
@@ -1056,6 +1174,7 @@ struct FindingRow: View {
     let onDismiss: (DamageFinding) -> Void
     let onSeverityChange: (DamageFinding, DamageSeverity) -> Void
     let onNoteChange: (DamageFinding, String) -> Void
+    let onLocate: (DamageFinding) -> Void
 
     var body: some View {
         SurfaceCard {
@@ -1081,6 +1200,12 @@ struct FindingRow: View {
                             .font(.subheadline)
                             .foregroundStyle(AppTheme.muted)
 
+                        if !finding.panel.isEmpty {
+                            Label(finding.panel, systemImage: "rectangle.dashed")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AppTheme.accent)
+                        }
+
                         HStack {
                             Menu {
                                 ForEach(DamageSeverity.allCases) { severity in
@@ -1094,6 +1219,20 @@ struct FindingRow: View {
                             StatusPill(text: finding.comparisonStatus.shortLabel, systemImage: finding.comparisonStatus.icon, color: finding.comparisonStatus.color)
                             StatusPill(text: finding.angle.rawValue, systemImage: "viewfinder", color: AppTheme.accent)
                             StatusPill(text: finding.reviewStatus.rawValue, systemImage: finding.reviewStatus.icon, color: finding.reviewStatus.color)
+                            StatusPill(text: "Risk \(finding.falsePositiveRisk.rawValue)", systemImage: "eye.trianglebadge.exclamationmark", color: finding.falsePositiveRisk.color)
+                        }
+
+                        if !finding.evidence.isEmpty {
+                            Text("Evidence: \(finding.evidence)")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        if finding.needsHumanReview {
+                            Label("Needs human review", systemImage: "person.crop.circle.badge.exclamationmark")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AppTheme.warning)
                         }
 
                         if !finding.comparisonReason.isEmpty {
@@ -1116,32 +1255,60 @@ struct FindingRow: View {
                 .lineLimit(2...4)
                 .textFieldStyle(.roundedBorder)
 
-                HStack {
+                VStack(spacing: 8) {
                     Button {
-                        onConfirm(finding)
+                        onLocate(finding)
                     } label: {
-                        Label(finding.reviewStatus == .confirmed ? "Confirmed" : "Confirm", systemImage: "checkmark")
+                        Label("View photo", systemImage: "photo")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background((finding.reviewStatus == .confirmed ? Color.green : AppTheme.accent).opacity(0.10))
-                            .foregroundStyle(finding.reviewStatus == .confirmed ? .green : AppTheme.accent)
+                            .background(AppTheme.warning.opacity(0.12))
+                            .foregroundStyle(AppTheme.warning)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
-                    .disabled(finding.reviewStatus == .confirmed)
 
-                    Button {
-                        onDismiss(finding)
-                    } label: {
-                        Label(finding.reviewStatus == .dismissed ? "Dismissed" : "Dismiss", systemImage: "xmark")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(AppTheme.line.opacity(0.70))
-                            .foregroundStyle(AppTheme.ink)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
+                    FindingQuickActions(
+                        finding: finding,
+                        onConfirm: onConfirm,
+                        onDismiss: onDismiss
+                    )
                 }
+            }
+        }
+    }
+}
+
+struct FindingQuickActions: View {
+    let finding: DamageFinding
+    let onConfirm: (DamageFinding) -> Void
+    let onDismiss: (DamageFinding) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                onConfirm(finding)
+            } label: {
+                Label(finding.reviewStatus == .confirmed ? "Confirmed" : "Confirm", systemImage: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background((finding.reviewStatus == .confirmed ? Color.green : AppTheme.accent).opacity(0.12))
+                    .foregroundStyle(finding.reviewStatus == .confirmed ? .green : AppTheme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .disabled(finding.reviewStatus == .confirmed)
+
+            Button {
+                onDismiss(finding)
+            } label: {
+                Label("Dismiss", systemImage: "xmark")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.line.opacity(0.70))
+                    .foregroundStyle(AppTheme.ink)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
     }

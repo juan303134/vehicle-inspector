@@ -46,6 +46,8 @@ struct CaptureFlowView: View {
     @State private var odometerText = ""
     @State private var odometerImageData: Data?
     @State private var cloudSaveMessage: String?
+    @State private var lastPinchZoom: CGFloat = 1
+    @State private var selectedAnalysisMode: AnalysisMode = .accurate
 
     init(vehicle: Vehicle, mode: CaptureMode = .guided) {
         self.vehicle = vehicle
@@ -62,6 +64,7 @@ struct CaptureFlowView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         progressHeader
                         cameraCapture
+                        analysisModeSection
                         if let analysisMessage {
                             analysisNotice(analysisMessage)
                         }
@@ -144,14 +147,14 @@ struct CaptureFlowView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(LinearGradient(colors: [Color(red: 0.13, green: 0.16, blue: 0.18), Color(red: 0.24, green: 0.29, blue: 0.31)], startPoint: .topLeading, endPoint: .bottomTrailing))
 
-                if let uiImage = selectedUIImage {
+                if camera.isAuthorized && camera.isCameraAvailable {
+                    CameraPreview(session: camera.session)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                } else if let uiImage = selectedUIImage {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                } else if camera.isAuthorized && camera.isCameraAvailable {
-                    CameraPreview(session: camera.session)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                 } else {
@@ -168,33 +171,16 @@ struct CaptureFlowView: View {
                     .padding()
                 }
 
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.white.opacity(0.76), style: StrokeStyle(lineWidth: 2, dash: [10, 8]))
-                    .frame(width: 260, height: 118)
-                    .overlay(alignment: .top) {
-                        Text(mode == .free ? "Focus on the damage" : "Align the vehicle")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.45))
-                            .foregroundStyle(.white)
-                            .clipShape(Capsule())
-                            .offset(y: -12)
+                if camera.isAuthorized && camera.isCameraAvailable {
+                    VStack {
+                        Spacer()
+                        cameraControlBar
                     }
-
-                VStack {
-                    Spacer()
-                    Text(selectedAngle.instruction)
-                        .font(.footnote)
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .padding(10)
-                        .frame(maxWidth: .infinity)
-                        .background(.black.opacity(0.38))
                 }
             }
             .frame(height: 330)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .simultaneousGesture(cameraZoomGesture)
 
             selectedPhotoStrip
 
@@ -257,6 +243,65 @@ struct CaptureFlowView: View {
         }
     }
 
+    private var cameraControlBar: some View {
+        VStack(spacing: 10) {
+            if camera.availableLenses.count > 1 {
+                HStack(spacing: 8) {
+                    ForEach(camera.availableLenses) { lens in
+                        Button {
+                            camera.selectLens(lens)
+                            lastPinchZoom = 1
+                        } label: {
+                            VStack(spacing: 2) {
+                                Text(lens.rawValue)
+                                    .font(.subheadline.weight(.bold))
+                                Text(lens.title)
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .frame(minWidth: 58)
+                            .padding(.vertical, 8)
+                            .background(camera.selectedLens == lens ? Color.white : Color.white.opacity(0.14))
+                            .foregroundStyle(camera.selectedLens == lens ? Color.black : Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: "minus.magnifyingglass")
+                    .foregroundStyle(.white.opacity(0.76))
+
+                Slider(
+                    value: Binding(
+                        get: { Double(camera.zoomFactor) },
+                        set: { camera.setZoomFactor(CGFloat($0)) }
+                    ),
+                    in: Double(camera.minimumZoomFactor)...Double(camera.maximumZoomFactor)
+                )
+                .tint(.white)
+
+                Text(String(format: "%.1fx", camera.zoomFactor))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44)
+            }
+        }
+        .padding(12)
+        .background(.black.opacity(0.54))
+    }
+
+    private var cameraZoomGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                let nextZoom = lastPinchZoom * value
+                camera.setZoomFactor(nextZoom)
+            }
+            .onEnded { _ in
+                lastPinchZoom = camera.zoomFactor
+            }
+    }
+
     private var odometerSection: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
@@ -307,6 +352,27 @@ struct CaptureFlowView: View {
                     }
                     .accessibilityLabel("Upload odometer photo")
                 }
+            }
+        }
+    }
+
+    private var analysisModeSection: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Analysis mode", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.ink)
+
+                Picker("Analysis mode", selection: $selectedAnalysisMode) {
+                    ForEach(AnalysisMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(selectedAnalysisMode.subtitle)
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.muted)
             }
         }
     }
@@ -638,7 +704,7 @@ struct CaptureFlowView: View {
 
         Task {
             do {
-                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos)
+                let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos, mode: selectedAnalysisMode)
                 let inspection = await MainActor.run {
                     store.createInspection(
                         for: vehicle,
