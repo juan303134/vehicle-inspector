@@ -1,5 +1,5 @@
 const http = require("node:http");
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 
 let Pool;
 try {
@@ -566,19 +566,25 @@ async function uploadInspectionPhotoToCloudinary({ inspectionId, photoId, angle,
   const safeAngle = angle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const publicId = `${folder}/${inspectionId}/${safeAngle}-${photoId}`;
   const uploadUrl = `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/image/upload`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const tags = "vehicle-inspector,inspection";
+  const signature = signCloudinaryParams({
+    overwrite: "true",
+    public_id: publicId,
+    tags,
+    timestamp,
+  });
   const form = new FormData();
   form.append("file", `data:image/jpeg;base64,${imageBase64}`);
   form.append("public_id", publicId);
   form.append("overwrite", "true");
-  form.append("resource_type", "image");
-  form.append("tags", "vehicle-inspector,inspection");
+  form.append("tags", tags);
+  form.append("timestamp", String(timestamp));
+  form.append("api_key", CLOUDINARY_API_KEY);
+  form.append("signature", signature);
 
-  const credentials = Buffer.from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`).toString("base64");
   const response = await fetch(uploadUrl, {
     method: "POST",
-    headers: {
-      "Authorization": `Basic ${credentials}`,
-    },
     body: form,
   });
 
@@ -593,6 +599,18 @@ async function uploadInspectionPhotoToCloudinary({ inspectionId, photoId, angle,
     imageUrl: json.secure_url || json.url || null,
     publicId: json.public_id || publicId,
   };
+}
+
+function signCloudinaryParams(params) {
+  const payload = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+
+  return createHash("sha1")
+    .update(`${payload}${CLOUDINARY_API_SECRET}`)
+    .digest("hex");
 }
 
 async function analyzeVehiclePhotos(photos) {
