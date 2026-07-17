@@ -98,16 +98,16 @@ final class InspectionStore: ObservableObject {
 
     private func mergeCloudInspections(_ loadedInspections: [Inspection], for vehicleID: UUID? = nil) {
         let loadedIDs = Set(loadedInspections.map(\.id))
-        let localInProgress = inspections.filter { inspection in
-            guard inspection.status == .analyzing || inspection.status == .failed else {
-                return false
-            }
-
+        let localUnsynced = inspections.filter { inspection in
             if let vehicleID, inspection.vehicleID != vehicleID {
                 return false
             }
 
-            return !loadedIDs.contains(inspection.id)
+            if loadedIDs.contains(inspection.id) {
+                return false
+            }
+
+            return inspection.status == .analyzing || inspection.status == .failed || inspection.photos.contains { $0.imageData != nil }
         }
 
         if let vehicleID {
@@ -117,7 +117,7 @@ final class InspectionStore: ObservableObject {
         }
 
         inspections.append(contentsOf: loadedInspections)
-        inspections.append(contentsOf: localInProgress)
+        inspections.append(contentsOf: localUnsynced)
     }
 
     func createInspection(
@@ -179,6 +179,17 @@ final class InspectionStore: ObservableObject {
 
         Task {
             do {
+                do {
+                    _ = try await VehicleDamageAnalysisService.shared.saveInspection(vehicle: vehicle, inspection: inspection)
+                    await MainActor.run {
+                        self.cloudMessage = "Inspection photos saved. AI analysis is still running..."
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.cloudMessage = "AI analysis is running. Initial cloud save failed, retrying after analysis."
+                    }
+                }
+
                 let findings = try await VehicleDamageAnalysisService.shared.analyze(photos: photos, mode: mode)
                 await MainActor.run {
                     self.replaceAnalysis(

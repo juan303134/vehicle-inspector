@@ -524,11 +524,18 @@ async function createInspection(vehicleId, body) {
 
   try {
     await client.query("BEGIN");
-    const previousFindings = await getPreviousInspectionFindings(client, vehicleId);
+    const previousFindings = await getPreviousInspectionFindings(client, vehicleId, inspectionId);
 
     const inspectionResult = await client.query(
       `INSERT INTO inspections (id, vehicle_id, status, odometer_text, inspector_notes, ai_analyzed, summary)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET
+         status = EXCLUDED.status,
+         odometer_text = EXCLUDED.odometer_text,
+         inspector_notes = EXCLUDED.inspector_notes,
+         ai_analyzed = EXCLUDED.ai_analyzed,
+         summary = EXCLUDED.summary,
+         updated_at = NOW()
        RETURNING *`,
       [
         inspectionId,
@@ -540,6 +547,9 @@ async function createInspection(vehicleId, body) {
         JSON.stringify(body.summary || {}),
       ]
     );
+
+    await client.query("DELETE FROM damage_findings WHERE inspection_id = $1", [inspectionId]);
+    await client.query("DELETE FROM checklist_items WHERE inspection_id = $1", [inspectionId]);
 
     for (const photo of photos) {
       if (!photo.id || !photo.imageBase64 || !ALLOWED_ANGLES.includes(photo.angle)) {
@@ -555,7 +565,12 @@ async function createInspection(vehicleId, body) {
 
       await client.query(
         `INSERT INTO inspection_photos (id, inspection_id, angle, image_base64, image_url, cloudinary_public_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO UPDATE SET
+           angle = EXCLUDED.angle,
+           image_base64 = EXCLUDED.image_base64,
+           image_url = EXCLUDED.image_url,
+           cloudinary_public_id = EXCLUDED.cloudinary_public_id`,
         [
           String(photo.id),
           inspectionId,
@@ -741,12 +756,13 @@ async function deleteAllData() {
   }
 }
 
-async function getPreviousInspectionFindings(client, vehicleId) {
+async function getPreviousInspectionFindings(client, vehicleId, excludeInspectionId = null) {
   const result = await client.query(
     `WITH previous_inspection AS (
        SELECT id
        FROM inspections
        WHERE vehicle_id = $1
+         AND ($2::TEXT IS NULL OR id <> $2)
        ORDER BY created_at DESC
        LIMIT 1
      )
@@ -754,7 +770,7 @@ async function getPreviousInspectionFindings(client, vehicleId) {
      FROM damage_findings f
      JOIN previous_inspection p ON p.id = f.inspection_id
      ORDER BY f.created_at ASC`,
-    [vehicleId]
+    [vehicleId, excludeInspectionId]
   );
 
   return result.rows.map((row) => ({
