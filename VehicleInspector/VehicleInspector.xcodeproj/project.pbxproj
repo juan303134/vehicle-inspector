@@ -20,6 +20,7 @@
 		AA000001000000000000000B /* CameraManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001B /* CameraManager.swift */; };
 		AA000001000000000000000C /* CameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001C /* CameraPreview.swift */; };
 		AA000001000000000000000D /* VehicleDamageAnalysisService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001D /* VehicleDamageAnalysisService.swift */; };
+		AA000001000000000000000E /* InspectionDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001E /* InspectionDashboardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +38,7 @@
 		AA000001000000000000001B /* CameraManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManager.swift; sourceTree = "<group>"; };
 		AA000001000000000000001C /* CameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreview.swift; sourceTree = "<group>"; };
 		AA000001000000000000001D /* VehicleDamageAnalysisService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleDamageAnalysisService.swift; sourceTree = "<group>"; };
+		AA000001000000000000001E /* InspectionDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectionDashboardView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,6 +68,7 @@
 				AA0000010000000000000013 /* InspectionStore.swift */,
 				AA0000010000000000000014 /* Theme.swift */,
 				AA0000010000000000000015 /* VehicleListView.swift */,
+				AA000001000000000000001E /* InspectionDashboardView.swift */,
 				AA0000010000000000000016 /* AddVehicleView.swift */,
 				AA0000010000000000000017 /* VehicleDetailView.swift */,
 				AA0000010000000000000018 /* CaptureFlowView.swift */,
@@ -170,6 +173,7 @@
 				AA000001000000000000000B /* CameraManager.swift in Sources */,
 				AA000001000000000000000C /* CameraPreview.swift in Sources */,
 				AA000001000000000000000D /* VehicleDamageAnalysisService.swift in Sources */,
+				AA000001000000000000000E /* InspectionDashboardView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

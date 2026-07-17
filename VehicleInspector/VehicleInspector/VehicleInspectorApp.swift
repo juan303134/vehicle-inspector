@@ -6,8 +6,24 @@ struct VehicleInspectorApp: App {
 
     var body: some Scene {
         WindowGroup {
-            VehicleListView()
+            RootTabView()
                 .environmentObject(store)
+        }
+    }
+}
+
+struct RootTabView: View {
+    var body: some View {
+        TabView {
+            VehicleListView()
+                .tabItem {
+                    Label("Vehicles", systemImage: "car.2")
+                }
+
+            InspectionDashboardView()
+                .tabItem {
+                    Label("Dashboard", systemImage: "chart.bar.doc.horizontal")
+                }
         }
     }
 }

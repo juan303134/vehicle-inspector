@@ -28,6 +28,36 @@ final class InspectionStore: ObservableObject {
         isLoadingCloudData = false
     }
 
+    func loadAllCloudData() async {
+        isLoadingCloudData = true
+        cloudMessage = nil
+
+        do {
+            let loadedVehicles = try await VehicleDamageAnalysisService.shared.fetchVehicles()
+            var loadedInspections: [Inspection] = []
+
+            for vehicle in loadedVehicles {
+                let vehicleInspections = try await VehicleDamageAnalysisService.shared.fetchInspections(vehicleID: vehicle.id)
+                loadedInspections.append(contentsOf: vehicleInspections)
+            }
+
+            vehicles = loadedVehicles.map { vehicle in
+                var updatedVehicle = vehicle
+                updatedVehicle.lastInspectionDate = loadedInspections
+                    .filter { $0.vehicleID == vehicle.id }
+                    .map(\.date)
+                    .max() ?? vehicle.lastInspectionDate
+                return updatedVehicle
+            }
+            inspections = loadedInspections
+            cloudMessage = "Cloud dashboard loaded."
+        } catch {
+            cloudMessage = "Could not load cloud dashboard."
+        }
+
+        isLoadingCloudData = false
+    }
+
     func loadCloudInspections(for vehicle: Vehicle) async {
         isLoadingCloudData = true
         cloudMessage = nil
