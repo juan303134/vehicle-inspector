@@ -21,6 +21,7 @@
 		AA000001000000000000000C /* CameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001C /* CameraPreview.swift */; };
 		AA000001000000000000000D /* VehicleDamageAnalysisService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001D /* VehicleDamageAnalysisService.swift */; };
 		AA000001000000000000000E /* InspectionDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001E /* InspectionDashboardView.swift */; };
+		AA000001000000000000000F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000001000000000000001F /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +40,7 @@
 		AA000001000000000000001C /* CameraPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreview.swift; sourceTree = "<group>"; };
 		AA000001000000000000001D /* VehicleDamageAnalysisService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VehicleDamageAnalysisService.swift; sourceTree = "<group>"; };
 		AA000001000000000000001E /* InspectionDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectionDashboardView.swift; sourceTree = "<group>"; };
+		AA000001000000000000001F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,6 +79,7 @@
 				AA000001000000000000001B /* CameraManager.swift */,
 				AA000001000000000000001C /* CameraPreview.swift */,
 				AA000001000000000000001D /* VehicleDamageAnalysisService.swift */,
+				AA000001000000000000001F /* Assets.xcassets */,
 			);
 			path = VehicleInspector;
 			sourceTree = "<group>";
@@ -150,6 +153,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA000001000000000000000F /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
