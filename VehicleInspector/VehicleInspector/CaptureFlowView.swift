@@ -100,12 +100,14 @@ struct CaptureFlowView: View {
             }
         }
         .sheet(isPresented: $showingImagePicker) {
-            ImagePicker(sourceType: .photoLibrary) { image in
+            ImagePicker(selectionLimit: pickerTarget == .vehiclePhoto ? 0 : 1) { images in
                 switch pickerTarget {
                 case .vehiclePhoto:
-                    saveCapturedImage(image)
+                    images.forEach(saveCapturedImage)
                 case .odometer:
-                    saveOdometerImage(image)
+                    if let image = images.first {
+                        saveOdometerImage(image)
+                    }
                 }
             }
         }
@@ -224,7 +226,7 @@ struct CaptureFlowView: View {
                         .foregroundStyle(AppTheme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .accessibilityLabel("Upload photo")
+                .accessibilityLabel("Upload photos")
 
                 if mode == .guided {
                     Button {
