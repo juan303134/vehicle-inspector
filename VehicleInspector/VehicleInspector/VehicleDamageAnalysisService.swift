@@ -3,7 +3,7 @@ import Foundation
 struct VehicleDamageAnalysisService {
     static let shared = VehicleDamageAnalysisService()
 
-    private let baseURL = URL(string: "http://10.0.0.169:8787")!
+    private let baseURL = URL(string: "https://vehicle-inspector-zgsi.onrender.com")!
 
     private var analyzeEndpoint: URL {
         baseURL.appendingPathComponent("analyze")

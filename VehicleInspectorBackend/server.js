@@ -1,8 +1,17 @@
 const http = require("node:http");
+const { randomUUID } = require("node:crypto");
+
+let Pool;
+try {
+  ({ Pool } = require("pg"));
+} catch (error) {
+  Pool = null;
+}
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 8787);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const DATABASE_URL = process.env.DATABASE_URL;
 const DEFAULT_OPENAI_MODELS = [
   "gpt-4.1-mini",
   "gpt-4.1",
@@ -26,6 +35,8 @@ const modelState = {
 const ALLOWED_ANGLES = ["Front", "Driver side", "Passenger side", "Rear", "Free photo"];
 const DAMAGE_TYPES = ["Scratch", "Dent", "Paint chip", "Scuff", "Glass/Light"];
 const SEVERITIES = ["Low", "Medium", "High"];
+const db = createDatabaseClient();
+let dbInitPromise = null;
 
 const responseSchema = {
   type: "object",
@@ -66,6 +77,8 @@ const responseSchema = {
 const server = http.createServer(async (req, res) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   setCorsHeaders(res);
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const pathname = requestUrl.pathname;
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -73,17 +86,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.method === "GET" && pathname === "/health") {
     sendJson(res, 200, {
       ok: true,
       models: OPENAI_MODELS,
       workingModel: modelState.workingModel,
       hasApiKey: Boolean(OPENAI_API_KEY),
+      database: {
+        configured: Boolean(DATABASE_URL),
+        driverLoaded: Boolean(Pool),
+      },
     });
     return;
   }
 
-  if (req.method === "GET" && req.url === "/models") {
+  if (req.method === "GET" && pathname === "/models") {
     try {
       if (!OPENAI_API_KEY) {
         sendJson(res, 500, { error: "Missing OPENAI_API_KEY" });
@@ -103,7 +120,127 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/analyze") {
+  if (req.method === "GET" && pathname === "/vehicles") {
+    try {
+      await ensureDatabase();
+      const result = await db.query(
+        `SELECT
+          v.*,
+          COUNT(i.id)::int AS inspection_count,
+          MAX(i.created_at) AS last_inspection_at
+        FROM vehicles v
+        LEFT JOIN inspections i ON i.vehicle_id = v.id
+        GROUP BY v.id
+        ORDER BY v.updated_at DESC`
+      );
+      sendJson(res, 200, { vehicles: result.rows });
+    } catch (error) {
+      handleRouteError(res, error, "Could not load vehicles");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/vehicles") {
+    try {
+      await ensureDatabase();
+      const body = await readJson(req);
+      const vehicle = normalizeVehicleInput(body);
+      const result = await db.query(
+        `INSERT INTO vehicles (id, vin, plate, make, model, year, color, label)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [randomUUID(), vehicle.vin, vehicle.plate, vehicle.make, vehicle.model, vehicle.year, vehicle.color, vehicle.label]
+      );
+      sendJson(res, 201, { vehicle: result.rows[0] });
+    } catch (error) {
+      handleRouteError(res, error, "Could not create vehicle");
+    }
+    return;
+  }
+
+  const vehicleMatch = pathname.match(/^\/vehicles\/([^/]+)$/);
+  if (req.method === "GET" && vehicleMatch) {
+    try {
+      await ensureDatabase();
+      const vehicle = await getVehicle(vehicleMatch[1]);
+      if (!vehicle) {
+        sendJson(res, 404, { error: "Vehicle not found" });
+        return;
+      }
+      sendJson(res, 200, { vehicle });
+    } catch (error) {
+      handleRouteError(res, error, "Could not load vehicle");
+    }
+    return;
+  }
+
+  const vehicleInspectionsMatch = pathname.match(/^\/vehicles\/([^/]+)\/inspections$/);
+  if (req.method === "GET" && vehicleInspectionsMatch) {
+    try {
+      await ensureDatabase();
+      const vehicleId = vehicleInspectionsMatch[1];
+      const vehicle = await getVehicle(vehicleId);
+      if (!vehicle) {
+        sendJson(res, 404, { error: "Vehicle not found" });
+        return;
+      }
+
+      const result = await db.query(
+        `SELECT
+          i.*,
+          COUNT(DISTINCT p.id)::int AS photo_count,
+          COUNT(DISTINCT f.id)::int AS finding_count
+        FROM inspections i
+        LEFT JOIN inspection_photos p ON p.inspection_id = i.id
+        LEFT JOIN damage_findings f ON f.inspection_id = i.id
+        WHERE i.vehicle_id = $1
+        GROUP BY i.id
+        ORDER BY i.created_at DESC`,
+        [vehicleId]
+      );
+      sendJson(res, 200, { vehicle, inspections: result.rows });
+    } catch (error) {
+      handleRouteError(res, error, "Could not load inspections");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && vehicleInspectionsMatch) {
+    try {
+      await ensureDatabase();
+      const vehicleId = vehicleInspectionsMatch[1];
+      const vehicle = await getVehicle(vehicleId);
+      if (!vehicle) {
+        sendJson(res, 404, { error: "Vehicle not found" });
+        return;
+      }
+
+      const body = await readJson(req);
+      const inspection = await createInspection(vehicleId, body);
+      sendJson(res, 201, { vehicle, inspection });
+    } catch (error) {
+      handleRouteError(res, error, "Could not create inspection");
+    }
+    return;
+  }
+
+  const inspectionMatch = pathname.match(/^\/inspections\/([^/]+)$/);
+  if (req.method === "GET" && inspectionMatch) {
+    try {
+      await ensureDatabase();
+      const inspection = await getInspection(inspectionMatch[1]);
+      if (!inspection) {
+        sendJson(res, 404, { error: "Inspection not found" });
+        return;
+      }
+      sendJson(res, 200, { inspection });
+    } catch (error) {
+      handleRouteError(res, error, "Could not load inspection");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/analyze") {
     try {
       if (!OPENAI_API_KEY) {
         sendJson(res, 500, { error: "Missing OPENAI_API_KEY" });
@@ -136,6 +273,252 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`VehicleInspectorBackend listening on http://${HOST}:${PORT}`);
 });
+
+function createDatabaseClient() {
+  if (!DATABASE_URL || !Pool) {
+    return null;
+  }
+
+  return new Pool({
+    connectionString: DATABASE_URL,
+    ssl: DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+  });
+}
+
+async function ensureDatabase() {
+  if (!DATABASE_URL) {
+    const error = new Error("Missing DATABASE_URL");
+    error.status = 503;
+    throw error;
+  }
+
+  if (!Pool || !db) {
+    const error = new Error("PostgreSQL driver is not installed. Run npm install.");
+    error.status = 503;
+    throw error;
+  }
+
+  if (!dbInitPromise) {
+    dbInitPromise = initializeDatabase();
+  }
+
+  return dbInitPromise;
+}
+
+async function initializeDatabase() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id TEXT PRIMARY KEY,
+      vin TEXT,
+      plate TEXT,
+      make TEXT,
+      model TEXT,
+      year INTEGER,
+      color TEXT,
+      label TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS inspections (
+      id TEXT PRIMARY KEY,
+      vehicle_id TEXT NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'Needs review',
+      odometer_text TEXT,
+      inspector_notes TEXT,
+      ai_analyzed BOOLEAN NOT NULL DEFAULT FALSE,
+      summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS inspection_photos (
+      id TEXT PRIMARY KEY,
+      inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+      angle TEXT NOT NULL,
+      image_base64 TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS damage_findings (
+      id TEXT PRIMARY KEY,
+      inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+      photo_id TEXT,
+      angle TEXT,
+      type TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      location TEXT NOT NULL,
+      confidence NUMERIC,
+      is_new BOOLEAN NOT NULL DEFAULT FALSE,
+      region JSONB NOT NULL DEFAULT '{}'::jsonb,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS checklist_items (
+      id TEXT PRIMARY KEY,
+      inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT,
+      position INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+}
+
+function normalizeVehicleInput(body) {
+  const make = cleanOptionalString(body.make);
+  const model = cleanOptionalString(body.model);
+  const plate = cleanOptionalString(body.plate);
+  const vin = cleanOptionalString(body.vin);
+  const year = Number.isInteger(Number(body.year)) ? Number(body.year) : null;
+  const color = cleanOptionalString(body.color);
+  const label = cleanOptionalString(body.label) || [year, make, model, plate].filter(Boolean).join(" ") || "Untitled vehicle";
+
+  return { vin, plate, make, model, year, color, label };
+}
+
+function cleanOptionalString(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function getVehicle(vehicleId) {
+  const result = await db.query("SELECT * FROM vehicles WHERE id = $1", [vehicleId]);
+  return result.rows[0] || null;
+}
+
+async function createInspection(vehicleId, body) {
+  const client = await db.connect();
+  const inspectionId = randomUUID();
+  const photos = Array.isArray(body.photos) ? body.photos : [];
+  const findings = Array.isArray(body.findings) ? body.findings : [];
+  const checklist = Array.isArray(body.checklist) ? body.checklist : [];
+
+  try {
+    await client.query("BEGIN");
+
+    const inspectionResult = await client.query(
+      `INSERT INTO inspections (id, vehicle_id, status, odometer_text, inspector_notes, ai_analyzed, summary)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        inspectionId,
+        vehicleId,
+        cleanOptionalString(body.status) || "Needs review",
+        cleanOptionalString(body.odometerText),
+        cleanOptionalString(body.inspectorNotes),
+        Boolean(body.aiAnalyzed),
+        JSON.stringify(body.summary || {}),
+      ]
+    );
+
+    for (const photo of photos) {
+      if (!photo.id || !photo.imageBase64 || !ALLOWED_ANGLES.includes(photo.angle)) {
+        continue;
+      }
+
+      await client.query(
+        `INSERT INTO inspection_photos (id, inspection_id, angle, image_base64)
+         VALUES ($1, $2, $3, $4)`,
+        [String(photo.id), inspectionId, photo.angle, String(photo.imageBase64)]
+      );
+    }
+
+    for (const finding of findings) {
+      await client.query(
+        `INSERT INTO damage_findings
+          (id, inspection_id, photo_id, angle, type, severity, location, confidence, is_new, region, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          randomUUID(),
+          inspectionId,
+          cleanOptionalString(finding.photoID),
+          cleanOptionalString(finding.angle),
+          DAMAGE_TYPES.includes(finding.type) ? finding.type : "Scratch",
+          SEVERITIES.includes(finding.severity) ? finding.severity : "Low",
+          cleanOptionalString(finding.location) || "Vehicle damage",
+          clampConfidence(finding.confidence),
+          Boolean(finding.isNew),
+          JSON.stringify(finding.region || {}),
+          cleanOptionalString(finding.note),
+        ]
+      );
+    }
+
+    for (const [index, item] of checklist.entries()) {
+      await client.query(
+        `INSERT INTO checklist_items (id, inspection_id, title, status, note, position)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          randomUUID(),
+          inspectionId,
+          cleanOptionalString(item.title) || "Checklist item",
+          cleanOptionalString(item.status) || "Not checked",
+          cleanOptionalString(item.note),
+          index,
+        ]
+      );
+    }
+
+    await client.query("UPDATE vehicles SET updated_at = NOW() WHERE id = $1", [vehicleId]);
+    await client.query("COMMIT");
+
+    return {
+      ...inspectionResult.rows[0],
+      photos,
+      findings,
+      checklist,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getInspection(inspectionId) {
+  const inspectionResult = await db.query("SELECT * FROM inspections WHERE id = $1", [inspectionId]);
+  const inspection = inspectionResult.rows[0];
+  if (!inspection) {
+    return null;
+  }
+
+  const [photos, findings, checklist] = await Promise.all([
+    db.query("SELECT * FROM inspection_photos WHERE inspection_id = $1 ORDER BY created_at ASC", [inspectionId]),
+    db.query("SELECT * FROM damage_findings WHERE inspection_id = $1 ORDER BY created_at ASC", [inspectionId]),
+    db.query("SELECT * FROM checklist_items WHERE inspection_id = $1 ORDER BY position ASC", [inspectionId]),
+  ]);
+
+  return {
+    ...inspection,
+    photos: photos.rows,
+    findings: findings.rows,
+    checklist: checklist.rows,
+  };
+}
+
+function clampConfidence(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(1, number));
+}
 
 async function analyzeVehiclePhotos(photos) {
   console.log(`Sending ${photos.length} photo(s) to OpenAI model candidates: ${OPENAI_MODELS.join(", ")}`);
@@ -452,6 +835,14 @@ function readJson(req) {
 function sendJson(res, status, payload) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(payload));
+}
+
+function handleRouteError(res, error, fallbackMessage) {
+  console.error(error);
+  sendJson(res, error.status || 500, {
+    error: fallbackMessage,
+    detail: error.message,
+  });
 }
 
 function setCorsHeaders(res) {

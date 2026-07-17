@@ -78,6 +78,7 @@ Start Command: npm start
 
 ```text
 OPENAI_API_KEY=your_openai_api_key
+DATABASE_URL=your_render_internal_database_url
 OPENAI_MODELS=gpt-4.1-mini,gpt-4.1,gpt-5.4-mini,gpt-5.4-mini-2026-03-17,gpt-5-mini
 VERIFY_ANALYSIS=true
 MIN_CONFIDENCE=0.45
@@ -94,13 +95,45 @@ You can also use `render.yaml` from this folder as a Render Blueprint. Render wi
 Render will give you a URL like:
 
 ```text
-https://vehicle-inspector-backend.onrender.com
+https://vehicle-inspector-zgsi.onrender.com
 ```
 
 Test:
 
 ```bash
-curl https://vehicle-inspector-backend.onrender.com/health
+curl https://vehicle-inspector-zgsi.onrender.com/health
 ```
 
 Then update the iPhone app backend URL in `VehicleDamageAnalysisService.swift`.
+
+## Database API
+
+When `DATABASE_URL` is configured, the backend creates the required tables automatically on first database request.
+
+Create a vehicle:
+
+```bash
+curl -X POST https://vehicle-inspector-zgsi.onrender.com/vehicles \
+  -H "Content-Type: application/json" \
+  -d '{"label":"Test vehicle","plate":"ABC123","make":"Toyota","model":"Camry","year":2022,"color":"White"}'
+```
+
+List vehicles:
+
+```bash
+curl https://vehicle-inspector-zgsi.onrender.com/vehicles
+```
+
+Create an inspection for a vehicle:
+
+```bash
+curl -X POST https://vehicle-inspector-zgsi.onrender.com/vehicles/VEHICLE_ID/inspections \
+  -H "Content-Type: application/json" \
+  -d '{"status":"Needs review","aiAnalyzed":true,"photos":[],"findings":[],"checklist":[]}'
+```
+
+Load an inspection:
+
+```bash
+curl https://vehicle-inspector-zgsi.onrender.com/inspections/INSPECTION_ID
+```

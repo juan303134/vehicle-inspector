@@ -15,5 +15,7 @@ services:
         value: true
       - key: MIN_CONFIDENCE
         value: 0.45
+      - key: DATABASE_URL
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
